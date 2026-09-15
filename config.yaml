@@ -1,0 +1,183 @@
+# ============================================================
+# HTTM - Traffic Accident Detection
+# ============================================================
+
+project:
+  name: "HTTM Traffic Accident Detection"
+  version: "0.1.0"
+
+
+# ============================================================
+# VIDEO
+# ============================================================
+
+video:
+  input: "dataset/input_video/traffic.mp4"
+  output: "outputs/videos/result.mp4"
+  features_csv: "dataset/output_features.csv"
+  display: true
+  save_output: true
+
+  resize:
+    enabled: true
+    width: 960
+
+
+# ============================================================
+# YOLO
+# ============================================================
+
+yolo:
+  model: "models/yolov8n.pt"
+  confidence: 0.30
+  iou: 0.50
+  device: "cpu"
+
+
+  # COCO classes thường dùng:
+  #
+  # 0  person
+  # 1  bicycle
+  # 2  car
+  # 3  motorcycle
+  # 5  bus
+  # 7  truck
+  #
+  # Với bài toán giao thông hiện tại:
+  classes:
+    - 2
+    - 3
+    - 5
+    - 7
+
+
+# ============================================================
+# BYTE TRACK
+# ============================================================
+
+tracker:
+
+  type: "bytetrack"
+
+  config: "bytetrack.yaml"
+
+  # Số frame tối đa giữ trajectory khi mất detection
+  max_missed_frames: 15
+
+  # Số frame trajectory tối đa lưu cho mỗi object
+  max_history: 300
+
+
+# ============================================================
+# PERSPECTIVE TRANSFORM
+# ============================================================
+
+perspective:
+
+  enabled: true
+
+  # ----------------------------------------------------------
+  # SOURCE POINTS
+  #
+  # 4 điểm trên ảnh camera.
+  #
+  # Thứ tự:
+  # top-left
+  # top-right
+  # bottom-right
+  # bottom-left
+  # ----------------------------------------------------------
+
+  source_points:
+    - [320, 230]
+    - [950, 230]
+    - [1200, 700]
+    - [100, 700]
+
+
+  # ----------------------------------------------------------
+  # DESTINATION POINTS
+  #
+  # Hình chữ nhật Bird's Eye View
+  # ----------------------------------------------------------
+
+  destination_points:
+    - [0, 0]
+    - [800, 0]
+    - [800, 1200]
+    - [0, 1200]
+
+
+  # ----------------------------------------------------------
+  # Pixel -> meter
+  #
+  # Đây chỉ là giá trị MẪU.
+  #
+  # Bạn bắt buộc phải calibration theo camera thực tế.
+  # ----------------------------------------------------------
+
+  meters_per_pixel_x: 0.05
+  meters_per_pixel_y: 0.05
+
+
+# ============================================================
+# TRAJECTORY / INTERPOLATION
+# ============================================================
+
+trajectory:
+
+  # Gap tối đa được phép nội suy
+  max_interpolation_gap: 15
+
+
+# ============================================================
+# FEATURE EXTRACTION
+# ============================================================
+
+features:
+
+  # Gia tốc giảm tốc tối thiểu để xem là sudden stop
+  sudden_stop_deceleration: 3.0
+
+  # Thay đổi hướng tối thiểu
+  direction_change_threshold: 45.0
+
+
+# ============================================================
+# RANDOM FOREST CLASSIFIER
+# ============================================================
+
+classifier:
+
+  enabled: true
+
+  model: "models/accident_rf_model.pkl"
+
+  # Xác suất từ RF >= threshold
+  # => POSSIBLE ACCIDENT
+  threshold: 0.70
+
+
+# ============================================================
+# OUTPUT
+# ============================================================
+
+output:
+
+  save_csv: true
+  save_video: true
+
+  # Hiển thị trajectory
+  draw_trajectory: true
+
+  # Hiển thị tọa độ mét
+  draw_world_position: true
+
+  # Hiển thị speed
+  draw_speed: true
+
+  # Hiển thị FPS
+  draw_fps: true
+
+  # Độ dài trajectory vẽ lên frame
+  trajectory_length: 50

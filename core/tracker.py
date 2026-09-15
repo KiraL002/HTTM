@@ -8,11 +8,12 @@ from ultralytics import YOLO
 
 
 @dataclass
-class Detection:
+class Track:
     """
-    Một object được YOLO phát hiện.
+    Một object đang được tracking.
     """
 
+    track_id: int
     bbox: np.ndarray
     confidence: float
     class_id: int
@@ -37,10 +38,7 @@ class Detection:
     @property
     def bottom_center(self) -> tuple[float, float]:
         """
-        Lấy điểm giữa cạnh dưới bounding box.
-
-        Đây là điểm đại diện cho vị trí tiếp xúc
-        của phương tiện với mặt đường.
+        Điểm giữa cạnh dưới bounding box.
         """
         x = (self.x1 + self.x2) / 2.0
         y = self.y2
@@ -48,39 +46,51 @@ class Detection:
         return x, y
 
 
-class YOLODetector:
+class ByteTrackTracker:
     """
-    Wrapper cho YOLO.
+    YOLO + ByteTrack.
 
-    Dùng cho detection độc lập.
-    Tracking sẽ được xử lý trong tracker.py.
+    Ultralytics quản lý:
+        - Detection
+        - Data association
+        - Track ID
+        - Track state
+
+    persist=True:
+        giữ state giữa các frame liên tiếp.
     """
 
     def __init__(
         self,
         model_path: str,
-        confidence: float = 0.25,
+        confidence: float = 0.15,
         iou_threshold: float = 0.5,
+        tracker_config: str = "bytetrack.yaml",
         device: Optional[str] = None,
+        classes: Optional[List[int]] = None,
     ) -> None:
 
         self.model_path = model_path
         self.confidence = confidence
         self.iou_threshold = iou_threshold
+        self.tracker_config = tracker_config
         self.device = device
+        self.classes = classes
 
         self.model = YOLO(model_path)
 
-    def predict(
+    def update(
         self,
         frame: np.ndarray,
-    ) -> List[Detection]:
+    ) -> List[Track]:
         """
-        Chạy YOLO detection trên một frame.
+        Nhận một frame và trả về danh sách tracks.
         """
 
         kwargs = {
             "source": frame,
+            "persist": True,
+            "tracker": self.tracker_config,
             "conf": self.confidence,
             "iou": self.iou_threshold,
             "verbose": False,
@@ -89,7 +99,10 @@ class YOLODetector:
         if self.device is not None:
             kwargs["device"] = self.device
 
-        results = self.model.predict(**kwargs)
+        if self.classes is not None:
+            kwargs["classes"] = self.classes
+
+        results = self.model.track(**kwargs)
 
         if not results:
             return []
@@ -99,21 +112,29 @@ class YOLODetector:
         if result.boxes is None:
             return []
 
+        # Chưa tracking được object nào
+        if not result.boxes.is_track:
+            return []
+
         boxes = result.boxes.xyxy.cpu().numpy()
         confidences = result.boxes.conf.cpu().numpy()
         class_ids = result.boxes.cls.cpu().numpy().astype(int)
+        track_ids = result.boxes.id.cpu().numpy().astype(int)
 
-        detections: List[Detection] = []
+        tracks: List[Track] = []
 
-        for bbox, confidence, class_id in zip(
+        for bbox, confidence, class_id, track_id in zip(
             boxes,
             confidences,
             class_ids,
+            track_ids,
         ):
+
             class_name = result.names[int(class_id)]
 
-            detections.append(
-                Detection(
+            tracks.append(
+                Track(
+                    track_id=int(track_id),
                     bbox=np.asarray(
                         bbox,
                         dtype=np.float32,
@@ -124,11 +145,19 @@ class YOLODetector:
                 )
             )
 
-        return detections
+        return tracks
+
+    def reset(self) -> None:
+        """
+        Reset tracker state bằng cách tạo lại model.
+
+        Hữu ích khi chuyển sang video mới.
+        """
+        self.model = YOLO(self.model_path)
 
     def __call__(
         self,
         frame: np.ndarray,
-    ) -> List[Detection]:
+    ) -> List[Track]:
 
-        return self.predict(frame)
+        return self.update(frame)
