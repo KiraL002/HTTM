@@ -17,7 +17,7 @@ from core import (
     PerspectiveTransformer,
     TrajectoryManager,
 )
-
+from core.event_detector import EventDetector
 from utils import (
     draw_detection,
     draw_fps,
@@ -128,7 +128,21 @@ class TrafficAccidentPipeline:
             if project_root is not None
             else Path(__file__).resolve().parent
         )
+                # ----------------------------------------------------
+        # Accident Event Detector
+        # ----------------------------------------------------
 
+        self.event_detector = EventDetector(
+            sequence_length=30,
+            start_threshold=0.70,
+            confirmation_frames=5,
+            release_threshold=0.30,
+        )
+
+        self.accident_detected = False
+        self.accident_start_frame = None
+        self.accident_probability = 0.0
+        self.accident_track_ids = set()
         # ----------------------------------------------------
         # Video
         # ----------------------------------------------------
@@ -629,7 +643,31 @@ class TrafficAccidentPipeline:
                     status = (
                         "CLASSIFIER_ERROR"
                     )
+                # ------------------------------------------------
+                # Accident Event Detection
+                # ------------------------------------------------
 
+                event = self.event_detector.update(
+                    track_id=track_id,
+                    frame_id=self.frame_id,
+                    probability=probability,
+                )
+
+                if event is not None:
+
+                    self.accident_detected = True
+
+                    self.accident_start_frame = (
+                        event.start_frame
+                    )
+
+                    self.accident_probability = (
+                        event.probability
+                    )
+
+                    self.accident_track_ids.add(
+                        event.track_id
+                    )
             # ------------------------------------------------
             # Global status
             # ------------------------------------------------
