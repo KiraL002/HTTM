@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Chuyển Đổi Phối Cảnh (Perspective Transformer)
+
+Module này chuyển đổi tọa độ pixel từ ảnh camera sang tọa độ thực tế (mét)
+thông qua Bird's Eye View (BEV) sử dụng phép biến đổi phối cảnh OpenCV.
+"""
+
 from __future__ import annotations
 
 from typing import Tuple

@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Trực Quan Hóa (Visualization)
+
+Module này cung cấp các hàm vẽ trực quan lên frame video:
+bounding box, quỹ đạo, tốc độ, tọa độ, trạng thái phát hiện, FPS.
+"""
+
 from __future__ import annotations
 
 from typing import Iterable, Optional
@@ -229,30 +236,23 @@ def draw_status(
     Vẽ trạng thái tổng thể.
     """
 
-    if probability is None:
-
-        text = f"STATUS: {status}"
-
-    else:
-
-        text = (
-            f"STATUS: {status} | "
-            f"ACCIDENT: "
-            f"{probability * 100:.1f}%"
-        )
-
-    # OpenCV BGR.
-    # Màu đỏ cho cảnh báo.
-    color = (
-        (0, 0, 255)
-        if "ACCIDENT" in status.upper()
-        else (0, 255, 0)
+    is_accident = (
+        "ACCIDENT" in status.upper()
+        or "CRASH" in status.upper()
+        or "TAI NẠN" in status.upper()
     )
+
+    if is_accident:
+        text = "CANH BAO: CO TAI NAN (ACCIDENT DETECTED)"
+        color = (0, 0, 255)  # Đỏ
+    else:
+        text = "TRANG THAI: AN TOAN (NORMAL)"
+        color = (0, 255, 0)  # Xanh lá
 
     cv2.rectangle(
         frame,
         (20, 20),
-        (550, 65),
+        (620, 65),
         (0, 0, 0),
         -1,
     )
@@ -262,7 +262,7 @@ def draw_status(
         text,
         (30, 50),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
+        0.65,
         color,
         2,
         cv2.LINE_AA,

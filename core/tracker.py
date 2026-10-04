@@ -1,16 +1,42 @@
+"""
+AcciVision — Module Theo Dõi Đa Đối Tượng (Multi-Object Tracker)
+
+Module này kết hợp YOLOv8 và ByteTrack để theo dõi liên tục
+các phương tiện giao thông qua nhiều frame video, gán mã định danh
+phiên theo dõi (Track ID) cho từng phương tiện.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 from ultralytics import YOLO
 
 
+# Bảng chuẩn hóa loại đối tượng từ COCO classes
+OBJECT_TYPE_MAP: Dict[str, str] = {
+    "car": "vehicle",
+    "motorcycle": "vehicle",
+    "bus": "vehicle",
+    "truck": "vehicle",
+    "bicycle": "two_wheeler",
+    "person": "pedestrian",
+}
+
+DEFAULT_VEHICLE_CLASSES: Set[str] = {"car", "motorcycle", "bus", "truck"}
+
+
 @dataclass
 class Track:
     """
-    Một object đang được tracking.
+    Một đối tượng (object) đang được tracking.
+
+    LƯU Ý QUAN TRỌNG:
+    - ``track_id`` là ID tracking tạm thời do ByteTrack quản lý theo từng video/session,
+      KHÔNG PHẢI là định danh vĩnh viễn (persistent vehicle ID / biển số xe) trong thế giới thực.
+    - ``object_type`` là phân loại chuẩn hóa ngữ nghĩa ('vehicle', 'two_wheeler', 'pedestrian', 'other').
     """
 
     track_id: int
@@ -18,6 +44,12 @@ class Track:
     confidence: float
     class_id: int
     class_name: str
+    object_type: str = "vehicle"
+
+    @property
+    def is_vehicle(self) -> bool:
+        """Kiểm tra đối tượng có phải là phương tiện giao thông (ô tô, xe máy, xe buýt, xe tải)."""
+        return self.object_type == "vehicle"
 
     @property
     def x1(self) -> float:
@@ -38,12 +70,24 @@ class Track:
     @property
     def bottom_center(self) -> tuple[float, float]:
         """
-        Điểm giữa cạnh dưới bounding box.
+        Điểm giữa cạnh dưới bounding box (thường tiếp xúc mặt đường).
         """
         x = (self.x1 + self.x2) / 2.0
         y = self.y2
-
         return x, y
+
+    @property
+    def center(self) -> tuple[float, float]:
+        """Tâm bounding box."""
+        return (self.x1 + self.x2) / 2.0, (self.y1 + self.y2) / 2.0
+
+    @property
+    def width(self) -> float:
+        return max(0.0, self.x2 - self.x1)
+
+    @property
+    def height(self) -> float:
+        return max(0.0, self.y2 - self.y1)
 
 
 class ByteTrackTracker:
@@ -56,26 +100,34 @@ class ByteTrackTracker:
         - Track ID
         - Track state
 
-    persist=True:
-        giữ state giữa các frame liên tiếp.
+    Chuẩn hóa:
+        - object_type rõ ràng
+        - Lọc phương tiện giao thông (vehicle filtering)
     """
 
     def __init__(
         self,
         model_path: str,
-        confidence: float = 0.15,
+        confidence: float = 0.25,
         iou_threshold: float = 0.5,
         tracker_config: str = "bytetrack.yaml",
         device: Optional[str] = None,
         classes: Optional[List[int]] = None,
+        vehicle_class_names: Optional[List[str]] = None,
+        vehicle_only: bool = True,
     ) -> None:
-
         self.model_path = model_path
-        self.confidence = confidence
-        self.iou_threshold = iou_threshold
+        self.confidence = float(confidence)
+        self.iou_threshold = float(iou_threshold)
         self.tracker_config = tracker_config
         self.device = device
         self.classes = classes
+        self.vehicle_only = bool(vehicle_only)
+
+        if vehicle_class_names:
+            self.vehicle_class_names = {x.lower().strip() for x in vehicle_class_names}
+        else:
+            self.vehicle_class_names = set(DEFAULT_VEHICLE_CLASSES)
 
         self.model = YOLO(model_path)
 
@@ -84,9 +136,9 @@ class ByteTrackTracker:
         frame: np.ndarray,
     ) -> List[Track]:
         """
-        Nhận một frame và trả về danh sách tracks.
+        Nhận một frame và trả về danh sách tracks đã được chuẩn hóa object_type
+        và lọc theo vehicle nếu vehicle_only=True.
         """
-
         kwargs = {
             "source": frame,
             "persist": True,
@@ -109,11 +161,7 @@ class ByteTrackTracker:
 
         result = results[0]
 
-        if result.boxes is None:
-            return []
-
-        # Chưa tracking được object nào
-        if not result.boxes.is_track:
+        if result.boxes is None or not result.boxes.is_track:
             return []
 
         boxes = result.boxes.xyxy.cpu().numpy()
@@ -129,19 +177,26 @@ class ByteTrackTracker:
             class_ids,
             track_ids,
         ):
+            raw_class_name = str(result.names[int(class_id)])
+            lower_name = raw_class_name.lower().strip()
 
-            class_name = result.names[int(class_id)]
+            # Xác định object_type chuẩn hóa
+            object_type = OBJECT_TYPE_MAP.get(lower_name, "other")
+            if lower_name in self.vehicle_class_names:
+                object_type = "vehicle"
+
+            # Vehicle filtering: nếu chỉ theo dõi phương tiện giao thông
+            if self.vehicle_only and object_type != "vehicle":
+                continue
 
             tracks.append(
                 Track(
                     track_id=int(track_id),
-                    bbox=np.asarray(
-                        bbox,
-                        dtype=np.float32,
-                    ),
+                    bbox=np.asarray(bbox, dtype=np.float32),
                     confidence=float(confidence),
                     class_id=int(class_id),
-                    class_name=class_name,
+                    class_name=raw_class_name,
+                    object_type=object_type,
                 )
             )
 
@@ -149,9 +204,7 @@ class ByteTrackTracker:
 
     def reset(self) -> None:
         """
-        Reset tracker state bằng cách tạo lại model.
-
-        Hữu ích khi chuyển sang video mới.
+        Reset tracker state khi chuyển video mới.
         """
         self.model = YOLO(self.model_path)
 
@@ -159,5 +212,4 @@ class ByteTrackTracker:
         self,
         frame: np.ndarray,
     ) -> List[Track]:
-
         return self.update(frame)

@@ -1,3 +1,12 @@
+"""
+AcciVision — Các hàm tiện ích (Utility Functions)
+
+Bao gồm:
+- Nội suy quỹ đạo (Interpolation)
+- Hàm toán học (Math Utils)
+- Vẽ trực quan hóa (Visualization)
+"""
+
 from .interpolation import (
     count_missing,
     has_large_gap,

@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Nội Suy Quỹ Đạo (Trajectory Interpolation)
+
+Module này cung cấp các hàm nội suy tuyến tính cho quỹ đạo
+chuyển động khi phương tiện bị mất phát hiện tạm thời.
+"""
+
 from __future__ import annotations
 
 from typing import Optional

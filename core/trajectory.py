@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Quản Lý Quỹ Đạo Chuyển Động (Trajectory Manager)
+
+Module này lưu trữ và quản lý lịch sử chuyển động (trajectory)
+của từng phương tiện, hỗ trợ nội suy khi mất phát hiện tạm thời.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

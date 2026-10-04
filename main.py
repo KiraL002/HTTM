@@ -1,3 +1,25 @@
+"""
+AcciVision — Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh
+Module chính: Pipeline xử lý đa tầng & Giao diện dòng lệnh (CLI)
+
+Pipeline xử lý:
+    OpenCV (đọc video)
+      ↓
+    YOLOv8 (phát hiện phương tiện) + ByteTrack (theo dõi đa đối tượng)
+      ↓
+    Quản lý quỹ đạo (Trajectory Management)
+      ↓
+    Chuyển đổi phối cảnh (Perspective Transform → Bird's Eye View)
+      ↓
+    Trích xuất đặc trưng động học (Kinematic Feature Extraction)
+      ↓
+    Phân loại tai nạn (Random Forest Classifier)
+      ↓
+    Phát hiện & quản lý sự kiện (Event Detection & Lifecycle)
+      ↓
+    Video kết quả + CSV đặc trưng
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -30,12 +52,22 @@ from utils import (
 
 
 # ============================================================
-# CONFIG
+# NẠP CẤU HÌNH (Configuration Loader)
 # ============================================================
 
 def load_config(config_path: str) -> dict:
     """
-    Load YAML configuration.
+    Nạp tệp cấu hình YAML.
+
+    Parameters
+    ----------
+    config_path : str
+        Đường dẫn đến tệp config.yaml
+
+    Returns
+    -------
+    dict
+        Dictionary chứa cấu hình hệ thống
     """
 
     path = Path(config_path)
@@ -61,7 +93,7 @@ def load_config(config_path: str) -> dict:
 
 
 # ============================================================
-# PATH
+# XỬ LÝ ĐƯỜNG DẪN (Path Resolution)
 # ============================================================
 
 def resolve_path(
@@ -69,7 +101,7 @@ def resolve_path(
     configured_path: str,
 ) -> Path:
     """
-    Resolve relative path from project root.
+    Giải quyết đường dẫn tương đối từ thư mục gốc dự án.
     """
 
     path = Path(configured_path)
@@ -91,28 +123,22 @@ def ensure_parent_directory(
 
 
 # ============================================================
-# MAIN PIPELINE
+# PIPELINE XỬ LÝ CHÍNH (Main Processing Pipeline)
 # ============================================================
 
 class TrafficAccidentPipeline:
     """
-    End-to-end traffic accident detection pipeline.
+    Pipeline phát hiện tai nạn giao thông đầu-cuối (end-to-end).
 
-    Pipeline:
-
-        OpenCV
-          ↓
-        YOLO + ByteTrack
-          ↓
-        Trajectory
-          ↓
-        Perspective Transform
-          ↓
-        Feature Extraction
-          ↓
-        Random Forest
-          ↓
-        Output Video + CSV
+    Quy trình xử lý:
+        [1] Đọc video (OpenCV)
+        [2] Phát hiện phương tiện (YOLOv8) + Theo dõi (ByteTrack)
+        [3] Quản lý quỹ đạo chuyển động (Trajectory)
+        [4] Chuyển đổi phối cảnh (Perspective Transform → BEV)
+        [5] Trích xuất đặc trưng động học (Feature Extraction)
+        [6] Phân loại tai nạn (Random Forest Classifier)
+        [7] Phát hiện & quản lý sự kiện (Event Detection)
+        [8] Xuất video kết quả + CSV đặc trưng
     """
 
     def __init__(
@@ -128,15 +154,25 @@ class TrafficAccidentPipeline:
             if project_root is not None
             else Path(__file__).resolve().parent
         )
-                # ----------------------------------------------------
-        # Accident Event Detector
+        # ----------------------------------------------------
+        # Bộ phát hiện sự kiện tai nạn (Accident Event Detector)
         # ----------------------------------------------------
 
+        classifier_thresh = float(
+            config.get("classifier", {}).get("threshold", 0.75)
+        )
+        confirmation_frames = int(
+            config.get("classifier", {}).get("confirmation_frames", 8)
+        )
+
         self.event_detector = EventDetector(
-            sequence_length=30,
-            start_threshold=0.70,
-            confirmation_frames=5,
-            release_threshold=0.30,
+            fps=30.0,
+            start_threshold=classifier_thresh,
+            confirmation_frames=confirmation_frames,
+            release_threshold=0.35,
+            release_frames=12,
+            spatial_merge_distance=6.0,
+            min_track_age=6,
         )
 
         self.accident_detected = False
@@ -144,7 +180,7 @@ class TrafficAccidentPipeline:
         self.accident_probability = 0.0
         self.accident_track_ids = set()
         # ----------------------------------------------------
-        # Video
+        # Cấu hình Video đầu vào/đầu ra
         # ----------------------------------------------------
 
         video_cfg = config["video"]
@@ -165,7 +201,7 @@ class TrafficAccidentPipeline:
         )
 
         # ----------------------------------------------------
-        # YOLO / ByteTrack
+        # Mô hình phát hiện (YOLO) & Theo dõi (ByteTrack)
         # ----------------------------------------------------
 
         yolo_cfg = config["yolo"]
@@ -205,7 +241,7 @@ class TrafficAccidentPipeline:
         )
 
         # ----------------------------------------------------
-        # Tracker / trajectory
+        # Quản lý quỹ đạo (Trajectory Manager)
         # ----------------------------------------------------
 
         self.trajectory_manager = (
@@ -226,7 +262,7 @@ class TrafficAccidentPipeline:
         )
 
         # ----------------------------------------------------
-        # Perspective
+        # Chuyển đổi phối cảnh (Perspective Transform)
         # ----------------------------------------------------
 
         perspective_cfg = config["perspective"]
@@ -274,7 +310,7 @@ class TrafficAccidentPipeline:
             )
 
         # ----------------------------------------------------
-        # Feature extractor
+        # Trích xuất đặc trưng động học (Feature Extractor)
         # ----------------------------------------------------
 
         feature_cfg = config["features"]
@@ -285,7 +321,7 @@ class TrafficAccidentPipeline:
                 sudden_stop_deceleration=float(
                     feature_cfg.get(
                         "sudden_stop_deceleration",
-                        3.0,
+                        4.5,
                     )
                 ),
                 direction_change_threshold=float(
@@ -294,11 +330,15 @@ class TrafficAccidentPipeline:
                         45.0,
                     )
                 ),
+                temporal_window=int(feature_cfg.get("temporal_window", 8)),
+                velocity_smoothing_alpha=float(
+                    feature_cfg.get("velocity_smoothing_alpha", 0.30)
+                ),
             )
         )
 
         # ----------------------------------------------------
-        # Classifier
+        # Mô hình phân loại tai nạn (Accident Classifier)
         # ----------------------------------------------------
 
         classifier_cfg = config[
@@ -358,12 +398,8 @@ class TrafficAccidentPipeline:
                 )
 
         # ----------------------------------------------------
-        # Previous states
-        #
-        # Used for calculating:
-        # velocity
-        # acceleration
-        # direction
+        # Trạng thái trước đó (Previous States)
+        # Dùng để tính toán: vận tốc, gia tốc, hướng di chuyển
         # ----------------------------------------------------
 
         self.previous_positions: Dict[
@@ -386,37 +422,56 @@ class TrafficAccidentPipeline:
             float
         ] = {}
 
-        # Current timestamp
+        # Đếm frame hiện tại
         self.frame_id = 0
         self.fps = 30.0
 
-        # Global accident status
-        self.global_status = "NORMAL"
+        # Trạng thái phát hiện tai nạn tổng thể
+        self.global_status = "BÌNH THƯỜNG"
         self.global_probability = 0.0
 
-        # Output CSV fields
+        # Các trường dữ liệu xuất CSV
         self.csv_fields = [
             "video_id",
             "frame_id",
             "timestamp",
             "track_id",
             "class_name",
+            "object_type",
             "x_m",
             "y_m",
             "speed_mps",
             "acceleration_mps2",
+            "deceleration_mps2",
+            "speed_delta_mps",
             "direction_deg",
             "direction_change_deg",
+            "yaw_rate_dps",
+            "lateral_acceleration_mps2",
+            "jerk_mps3",
             "nearest_distance_m",
+            "neighbor_count",
+            "has_neighbor",
+            "nearest_distance_valid",
+            "closing_speed_mps",
+            "interaction_count",
             "sudden_stop",
             "trajectory_change",
+            "speed_drop_window_mps",
+            "direction_change_max_deg",
+            "direction_change_sum_deg",
+            "speed_mean_mps",
+            "speed_std_mps",
+            "acceleration_std_mps2",
+            "stopped_after_motion",
+            "temporal_window",
             "interpolated",
             "accident_probability",
             "status",
         ]
 
     # ========================================================
-    # INITIALIZATION
+    # KHỞI TẠO MÔ HÌNH (Model Initialization)
     # ========================================================
 
     def _initialize_models(self) -> None:
@@ -430,10 +485,11 @@ class TrafficAccidentPipeline:
             tracker_config=self.tracker_config,
             device=self.yolo_device,
             classes=self.vehicle_classes,
+            vehicle_only=True,
         )
 
     # ========================================================
-    # VIDEO
+    # ĐỌC VIDEO ĐẦU VÀO (Video Input)
     # ========================================================
 
     def _open_video(self):
@@ -481,7 +537,7 @@ class TrafficAccidentPipeline:
         )
 
     # ========================================================
-    # OUTPUT CSV
+    # XUẤT CSV ĐẶC TRƯNG (Feature CSV Output)
     # ========================================================
 
     def _open_csv(self):
@@ -506,7 +562,7 @@ class TrafficAccidentPipeline:
         return file, writer
 
     # ========================================================
-    # CURRENT WORLD POSITIONS
+    # TỌA ĐỘ THỰC TẾ (World Positions)
     # ========================================================
 
     def _get_world_positions(
@@ -548,8 +604,19 @@ class TrafficAccidentPipeline:
         return positions
 
     # ========================================================
-    # FEATURE + CLASSIFICATION
+    # TRÍCH XUẤT ĐẶC TRƯNG & PHÂN LOẠI (Feature + Classification)
     # ========================================================
+
+    @staticmethod
+    def _infer_accident_type(feature) -> str:
+        """Phân loại sơ bộ loại tai nạn dựa trên đặc trưng động học."""
+        if feature.neighbor_count == 0:
+            return "single_vehicle_loss_of_control" if feature.trajectory_change else "single_vehicle_sudden_stop"
+        if feature.trajectory_change:
+            return "side_collision"
+        if feature.deceleration_mps2 >= 3.0:
+            return "rear_end_collision"
+        return "vehicle_collision"
 
     def _process_track_features(
         self,
@@ -603,7 +670,9 @@ class TrafficAccidentPipeline:
                     previous_velocity=previous_velocity,
                     previous_direction=previous_direction,
                     previous_speed=previous_speed,
-                    all_current_positions=world_positions,
+                    all_vehicle_positions=world_positions,
+                    all_vehicle_velocities=self.previous_velocities,
+                    object_type=track.object_type,
                 )
             )
 
@@ -613,7 +682,7 @@ class TrafficAccidentPipeline:
             status = "NORMAL"
 
             # ------------------------------------------------
-            # Classifier
+            # Phân loại tai nạn (Classifier)
             # ------------------------------------------------
 
             if self.classifier is not None:
@@ -644,13 +713,18 @@ class TrafficAccidentPipeline:
                         "CLASSIFIER_ERROR"
                     )
                 # ------------------------------------------------
-                # Accident Event Detection
+                # Phát hiện sự kiện tai nạn (Event Detection)
                 # ------------------------------------------------
 
                 event = self.event_detector.update(
                     track_id=track_id,
                     frame_id=self.frame_id,
                     probability=probability,
+                    position=current_position,
+                    speed=feature.speed_mps,
+                    direction=feature.direction_deg,
+                    vehicle_class=track.class_name,
+                    feature_dict=features_dict,
                 )
 
                 if event is not None:
@@ -665,11 +739,9 @@ class TrafficAccidentPipeline:
                         event.probability
                     )
 
-                    self.accident_track_ids.add(
-                        event.track_id
-                    )
+                    self.accident_track_ids.update(event.track_ids)
             # ------------------------------------------------
-            # Global status
+            # Trạng thái tổng thể (Global Status)
             # ------------------------------------------------
 
             if probability > max_probability:
@@ -678,29 +750,16 @@ class TrafficAccidentPipeline:
                     probability
                 )
 
-            if (
-                status == "POSSIBLE ACCIDENT"
-            ):
-                frame_status = (
-                    "POSSIBLE ACCIDENT"
-                )
+            if status in ("ACCIDENT", "POSSIBLE ACCIDENT"):
+                frame_status = "ACCIDENT"
 
             # ------------------------------------------------
-            # Update previous state
+            # Cập nhật trạng thái trước đó
             # ------------------------------------------------
 
             if previous_position is not None:
-
-                velocity = (
-                    self.feature_extractor
-                    .calculate_velocity(
-                        previous_position,
-                        current_position,
-                    )
-                )
-
+                velocity = self.feature_extractor.get_smoothed_velocity(track_id)
             else:
-
                 velocity = np.zeros(
                     2,
                     dtype=np.float64,
@@ -723,7 +782,7 @@ class TrafficAccidentPipeline:
             ] = feature.speed_mps
 
             # ------------------------------------------------
-            # CSV row
+            # Dòng dữ liệu CSV
             # ------------------------------------------------
 
             row = {
@@ -735,6 +794,7 @@ class TrafficAccidentPipeline:
                 ),
                 "track_id": track_id,
                 "class_name": track.class_name,
+                "object_type": track.object_type,
                 "x_m": feature.x_m,
                 "y_m": feature.y_m,
                 "speed_mps": (
@@ -743,21 +803,39 @@ class TrafficAccidentPipeline:
                 "acceleration_mps2": (
                     feature.acceleration_mps2
                 ),
+                "deceleration_mps2": feature.deceleration_mps2,
+                "speed_delta_mps": feature.speed_delta_mps,
                 "direction_deg": (
                     feature.direction_deg
                 ),
                 "direction_change_deg": (
                     feature.direction_change_deg
                 ),
+                "yaw_rate_dps": feature.yaw_rate_dps,
+                "lateral_acceleration_mps2": feature.lateral_acceleration_mps2,
+                "jerk_mps3": feature.jerk_mps3,
                 "nearest_distance_m": (
                     feature.nearest_distance_m
                 ),
+                "neighbor_count": feature.neighbor_count,
+                "has_neighbor": feature.has_neighbor,
+                "nearest_distance_valid": feature.nearest_distance_valid,
+                "closing_speed_mps": feature.closing_speed_mps,
+                "interaction_count": feature.interaction_count,
                 "sudden_stop": (
                     feature.sudden_stop
                 ),
                 "trajectory_change": (
                     feature.trajectory_change
                 ),
+                "speed_drop_window_mps": feature.speed_drop_window_mps,
+                "direction_change_max_deg": feature.direction_change_max_deg,
+                "direction_change_sum_deg": feature.direction_change_sum_deg,
+                "speed_mean_mps": feature.speed_mean_mps,
+                "speed_std_mps": feature.speed_std_mps,
+                "acceleration_std_mps2": feature.acceleration_std_mps2,
+                "stopped_after_motion": feature.stopped_after_motion,
+                "temporal_window": feature.temporal_window,
                 "interpolated": 0,
                 "accident_probability": (
                     probability
@@ -775,15 +853,19 @@ class TrafficAccidentPipeline:
                 )
             )
 
-        self.global_status = frame_status
-        self.global_probability = (
-            max_probability
-        )
+        active_events = self.event_detector.get_active_events()
+        all_events = self.event_detector.all_events()
+        if active_events or all_events:
+            self.global_status = "ACCIDENT DETECTED"
+            self.global_probability = max((e.probability for e in (active_events or all_events)), default=0.0)
+        else:
+            self.global_status = "NORMAL"
+            self.global_probability = max_probability
 
         return frame_features
 
     # ========================================================
-    # DRAW
+    # VẼ KẾT QUẢ LÊN FRAME (Drawing / Visualization)
     # ========================================================
 
     def _draw_frame(
@@ -822,7 +904,7 @@ class TrafficAccidentPipeline:
             ) = item
 
             # ------------------------------------------------
-            # BBOX
+            # Vẽ bounding box
             # ------------------------------------------------
 
             draw_detection(
@@ -834,7 +916,7 @@ class TrafficAccidentPipeline:
             )
 
             # ------------------------------------------------
-            # Bottom center
+            # Vẽ điểm đáy (bottom center)
             # ------------------------------------------------
 
             draw_track_point(
@@ -843,7 +925,7 @@ class TrafficAccidentPipeline:
             )
 
             # ------------------------------------------------
-            # Speed
+            # Hiển thị tốc độ
             # ------------------------------------------------
 
             if output_cfg.get(
@@ -861,7 +943,7 @@ class TrafficAccidentPipeline:
                 )
 
             # ------------------------------------------------
-            # World position
+            # Hiển thị tọa độ thực tế (mét)
             # ------------------------------------------------
 
             if (
@@ -883,7 +965,7 @@ class TrafficAccidentPipeline:
                 )
 
             # ------------------------------------------------
-            # Trajectory
+            # Vẽ quỹ đạo chuyển động
             # ------------------------------------------------
 
             if output_cfg.get(
@@ -930,7 +1012,7 @@ class TrafficAccidentPipeline:
                 # trong bản MVP này.
 
         # ----------------------------------------------------
-        # Status
+        # Hiển thị trạng thái phát hiện
         # ----------------------------------------------------
 
         draw_status(
@@ -952,7 +1034,7 @@ class TrafficAccidentPipeline:
         return frame
 
     # ========================================================
-    # RUN
+    # CHẠY PIPELINE (Run Pipeline)
     # ========================================================
 
     def run(
@@ -971,13 +1053,17 @@ class TrafficAccidentPipeline:
             height,
         ) = self._open_video()
 
-        # FeatureExtractor cần FPS thực tế.
+        # Cập nhật FPS thực tế cho FeatureExtractor & EventDetector
         self.feature_extractor.fps = (
             self.fps
         )
 
         self.feature_extractor.dt = (
             1.0 / self.fps
+        )
+
+        self.event_detector.fps = (
+            self.fps
         )
 
         total_frames = int(
@@ -1059,12 +1145,15 @@ class TrafficAccidentPipeline:
                 self.frame_id += 1
 
                 # ------------------------------------------------
-                # 1. YOLO + ByteTrack
+                # Bước 1: Phát hiện & Theo dõi (YOLO + ByteTrack)
                 # ------------------------------------------------
 
                 tracks = self.tracker.update(
                     frame
                 )
+
+                # Lọc chỉ giữ phương tiện giao thông (vehicle filtering)
+                tracks = [t for t in tracks if t.is_vehicle]
 
                 active_ids = {
                     track.track_id
@@ -1072,7 +1161,7 @@ class TrafficAccidentPipeline:
                 }
 
                 # ------------------------------------------------
-                # 2. World coordinates
+                # Bước 2: Tính tọa độ thực tế (World Coordinates)
                 # ------------------------------------------------
 
                 world_positions = (
@@ -1082,7 +1171,7 @@ class TrafficAccidentPipeline:
                 )
 
                 # ------------------------------------------------
-                # 3. Trajectory
+                # Bước 3: Cập nhật quỹ đạo (Trajectory Update)
                 # ------------------------------------------------
 
                 timestamp = (
@@ -1108,7 +1197,7 @@ class TrafficAccidentPipeline:
                     )
 
                 # ------------------------------------------------
-                # 4. Mark missing tracks
+                # Bước 4: Đánh dấu track mất tích
                 # ------------------------------------------------
 
                 self.trajectory_manager.mark_missed(
@@ -1118,7 +1207,7 @@ class TrafficAccidentPipeline:
                 )
 
                 # ------------------------------------------------
-                # 5. Feature extraction
+                # Bước 5: Trích xuất đặc trưng động học
                 # ------------------------------------------------
 
                 frame_features = (
@@ -1127,9 +1216,10 @@ class TrafficAccidentPipeline:
                         world_positions,
                     )
                 )
+                self.event_detector.end_frame(self.frame_id, set(active_ids))
 
                 # ------------------------------------------------
-                # 6. CSV
+                # Bước 6: Ghi dữ liệu CSV
                 # ------------------------------------------------
 
                 if csv_writer is not None:
@@ -1141,7 +1231,7 @@ class TrafficAccidentPipeline:
                         csv_writer.writerow(row)
 
                 # ------------------------------------------------
-                # 7. Processing FPS
+                # Bước 7: Tính FPS xử lý
                 # ------------------------------------------------
 
                 elapsed = (
@@ -1160,7 +1250,7 @@ class TrafficAccidentPipeline:
                 )
 
                 # ------------------------------------------------
-                # 8. Draw
+                # Bước 8: Vẽ kết quả lên frame
                 # ------------------------------------------------
 
                 frame = self._draw_frame(
@@ -1171,14 +1261,14 @@ class TrafficAccidentPipeline:
                 )
 
                 # ------------------------------------------------
-                # 9. Write video
+                # Bước 9: Ghi video kết quả
                 # ------------------------------------------------
 
                 if writer is not None:
                     writer.write(frame)
 
                 # ------------------------------------------------
-                # 10. Display
+                # Bước 10: Hiển thị cửa sổ OpenCV
                 # ------------------------------------------------
 
                 if video_cfg.get(
@@ -1187,7 +1277,7 @@ class TrafficAccidentPipeline:
                 ):
 
                     cv2.imshow(
-                        "HTTM - Traffic Accident Detection",
+                        "AcciVision - Phat Hien Tai Nan Giao Thong",
                         frame,
                     )
 
@@ -1197,13 +1287,14 @@ class TrafficAccidentPipeline:
                         break
 
                 # ------------------------------------------------
-                # 11. Progress callback
+                # Bước 11: Cập nhật tiến trình (Progress Callback)
                 # ------------------------------------------------
 
                 if (
                     progress_callback
                     is not None
                     and total_frames > 0
+                    and (self.frame_id % 5 == 0 or self.frame_id == total_frames)
                 ):
 
                     progress = min(
@@ -1228,6 +1319,8 @@ class TrafficAccidentPipeline:
 
             cv2.destroyAllWindows()
 
+        self.event_detector.finish(self.frame_id)
+
         average_fps = 0.0
 
         if processing_times:
@@ -1241,6 +1334,12 @@ class TrafficAccidentPipeline:
                 average_fps = (
                     1.0 / average_time
                 )
+
+        confirmed_events = self.event_detector.all_events()
+        has_accident = len(confirmed_events) > 0
+        overall_status = "ACCIDENT DETECTED" if has_accident else "NORMAL"
+        overall_verdict = "CÓ TAI NẠN" if has_accident else "KHÔNG CÓ TAI NẠN"
+        overall_probability = max((e.probability for e in confirmed_events), default=0.0)
 
         return {
             "video_input": str(
@@ -1256,30 +1355,70 @@ class TrafficAccidentPipeline:
                 self.frame_id
             ),
             "average_fps": average_fps,
-            "status": self.global_status,
-            "accident_probability": (
-                self.global_probability
-            ),
+            # Kết luận video có tai nạn hay không (Nhị phân)
+            "has_accident": has_accident,
+            "verdict": overall_verdict,
+            "status": overall_status,
+            "accident_probability": overall_probability,
+            "events_count": len(confirmed_events),
+            "events": [
+                {
+                    "event_id": e.event_id,
+                    "accident_type": e.accident_type,
+                    "start_frame": e.start_frame,
+                    "end_frame": e.end_frame,
+                    "start_time_s": round(e.start_time_s, 2),
+                    "end_time_s": round(e.end_time_s, 2),
+                    "duration_s": round(e.duration_s, 2),
+                    # Mã theo dõi ByteTrack (không phải biển số xe)
+                    "track_ids": sorted(list(e.track_ids)),
+                    "vehicle_types": e.vehicle_types,
+                    "probability": round(e.probability, 4),
+                    "active": e.active,
+                    "description": e.description,
+                }
+                for e in confirmed_events
+            ],
         }
 
 
 # ============================================================
-# CLI
+# GIAO DIỆN DÒNG LỆNH (Command Line Interface)
 # ============================================================
 
 def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "HTTM Traffic Accident "
-            "Detection Pipeline"
+            "AcciVision — Hệ Thống Phát Hiện "
+            "Tai Nạn Giao Thông Thông Minh"
         )
     )
 
     parser.add_argument(
         "--config",
         default="config.yaml",
-        help="Path to config.yaml",
+        help="Đường dẫn đến tệp cấu hình config.yaml",
+    )
+
+    parser.add_argument(
+        "--input",
+        "-i",
+        default=None,
+        help="Đường dẫn video đầu vào (ghi đè video.input trong config.yaml)",
+    )
+
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Đường dẫn video đầu ra (ghi đè video.output trong config.yaml)",
+    )
+
+    parser.add_argument(
+        "--no-display",
+        action="store_true",
+        help="Tắt cửa sổ hiển thị OpenCV (chế độ server)",
     )
 
     args = parser.parse_args()
@@ -1292,6 +1431,15 @@ def main():
         args.config
     )
 
+    if args.input:
+        config["video"]["input"] = args.input
+
+    if args.output:
+        config["video"]["output"] = args.output
+
+    if args.no_display:
+        config["video"]["display"] = False
+
     pipeline = (
         TrafficAccidentPipeline(
             config=config,
@@ -1301,16 +1449,16 @@ def main():
 
     print("=" * 60)
     print(
-        "HTTM TRAFFIC ACCIDENT DETECTION"
+        "ACCIVISION — PHÁT HIỆN TAI NẠN GIAO THÔNG THÔNG MINH"
     )
     print("=" * 60)
 
     print(
-        f"Input : {pipeline.video_input}"
+        f"Video đầu vào : {pipeline.video_input}"
     )
 
     print(
-        f"Model : {pipeline.yolo_model_path}"
+        f"Mô hình YOLO  : {pipeline.yolo_model_path}"
     )
 
     print("=" * 60)
@@ -1319,14 +1467,25 @@ def main():
 
     print()
     print("=" * 60)
-    print("PROCESSING COMPLETE")
+    print("KẾT QUẢ PHÂN TÍCH VIDEO")
     print("=" * 60)
-
-    for key, value in result.items():
-
-        print(
-            f"{key}: {value}"
-        )
+    verdict_str = "CÓ TAI NẠN (ACCIDENT DETECTED)" if result["has_accident"] else "KHÔNG CÓ TAI NẠN (NORMAL)"
+    print(f"📌 KẾT LUẬN VIDEO   : {verdict_str}")
+    print(f"🚨 Số vụ tai nạn    : {result['events_count']}")
+    print(f"🎞️ Tổng số frame    : {result['frames_processed']}")
+    print(f"⚡ Tốc độ xử lý     : {result['average_fps']:.1f} FPS")
+    print(f"📁 Video đầu ra     : {result['video_output']}")
+    print(f"📊 CSV đặc trưng    : {result['features_csv']}")
+    if result["has_accident"]:
+        print("-" * 60)
+        print("CHI TIẾT CÁC VỤ TAI NẠN:")
+        for idx, ev in enumerate(result.get("events", []), 1):
+            print(
+                f"  [{idx}] Loại: {ev['accident_type']} | "
+                f"Thời gian: {ev['start_time_s']}s -> {ev['end_time_s']}s "
+                f"(Thời lượng: {ev['duration_s']}s) | Xe ID: {list(ev['vehicle_types'].keys())}"
+            )
+    print("=" * 60)
 
 
 if __name__ == "__main__":

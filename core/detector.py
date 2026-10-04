@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Phát Hiện Phương Tiện (Vehicle Detector)
+
+Module này chứa wrapper cho YOLOv8 để phát hiện các phương tiện
+giao thông (ô tô, xe máy, xe buýt, xe tải) trong từng frame video.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

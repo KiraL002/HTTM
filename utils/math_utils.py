@@ -1,3 +1,10 @@
+"""
+AcciVision — Module Hàm Toán Học (Math Utilities)
+
+Các hàm tính toán: khoảng cách Euclidean, vận tốc, gia tốc,
+góc hướng, trung bình trượt, và các phép toán vector 2D.
+"""
+
 from __future__ import annotations
 
 from typing import Tuple

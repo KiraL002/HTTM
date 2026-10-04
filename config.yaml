@@ -1,183 +1,200 @@
 # ============================================================
-# HTTM - Traffic Accident Detection
+# AcciVision — Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh
+# Tệp cấu hình hệ thống (System Configuration)
 # ============================================================
 
 project:
-  name: "HTTM Traffic Accident Detection"
-  version: "0.1.0"
+  name: "AcciVision - Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh"
+  version: "1.0.0"
+  description: "Accident Detection System using Computer Vision & Machine Learning"
 
 
 # ============================================================
-# VIDEO
+# CẤU HÌNH VIDEO ĐẦU VÀO / ĐẦU RA
 # ============================================================
 
 video:
+  # Đường dẫn video đầu vào (tương đối hoặc tuyệt đối)
   input: "dataset/input_video/traffic.mp4"
+
+  # Đường dẫn video kết quả đầu ra
   output: "outputs/videos/result.mp4"
+
+  # Đường dẫn tệp CSV đặc trưng đầu ra
   features_csv: "dataset/output_features.csv"
+
+  # Hiển thị cửa sổ OpenCV khi chạy CLI
   display: true
+
+  # Lưu video kết quả
   save_output: true
 
+  # Thay đổi kích thước video đầu vào (tăng tốc xử lý)
   resize:
     enabled: true
     width: 960
 
 
 # ============================================================
-# YOLO
+# MÔ HÌNH PHÁT HIỆN PHƯƠNG TIỆN (YOLOv8)
 # ============================================================
 
 yolo:
+  # Đường dẫn mô hình YOLOv8
+  # Các lựa chọn: yolov8n.pt (nhanh), yolov8s.pt, yolov8m.pt (chính xác hơn)
   model: "models/yolov8n.pt"
+
+  # Ngưỡng tin cậy phát hiện (confidence threshold)
   confidence: 0.30
+
+  # Ngưỡng IoU cho Non-Maximum Suppression
   iou: 0.50
+
+  # Thiết bị tính toán: "cpu", "cuda", "cuda:0", "mps"
   device: "cpu"
 
-
-  # COCO classes thường dùng:
+  # Các lớp đối tượng COCO cần phát hiện:
+  #   0  = người (person)
+  #   1  = xe đạp (bicycle)
+  #   2  = ô tô (car)
+  #   3  = xe máy (motorcycle)
+  #   5  = xe buýt (bus)
+  #   7  = xe tải (truck)
   #
-  # 0  person
-  # 1  bicycle
-  # 2  car
-  # 3  motorcycle
-  # 5  bus
-  # 7  truck
-  #
-  # Với bài toán giao thông hiện tại:
+  # Hệ thống AcciVision chỉ theo dõi phương tiện giao thông:
   classes:
-    - 2
-    - 3
-    - 5
-    - 7
+    - 2   # Ô tô
+    - 3   # Xe máy
+    - 5   # Xe buýt
+    - 7   # Xe tải
 
 
 # ============================================================
-# BYTE TRACK
+# THEO DÕI ĐA ĐỐI TƯỢNG (ByteTrack Tracker)
 # ============================================================
 
 tracker:
-
+  # Thuật toán theo dõi
   type: "bytetrack"
 
+  # Tệp cấu hình ByteTrack
   config: "bytetrack.yaml"
 
-  # Số frame tối đa giữ trajectory khi mất detection
+  # Số frame tối đa giữ trajectory khi mất phát hiện
   max_missed_frames: 15
 
-  # Số frame trajectory tối đa lưu cho mỗi object
+  # Số frame lịch sử quỹ đạo tối đa cho mỗi phương tiện
   max_history: 300
 
 
 # ============================================================
-# PERSPECTIVE TRANSFORM
+# CHUYỂN ĐỔI PHỐI CẢNH (Perspective Transform → Bird's Eye View)
 # ============================================================
 
 perspective:
-
+  # Bật/tắt chuyển đổi phối cảnh
+  # Khi tắt: hệ thống sử dụng tọa độ pixel thay vì tọa độ mét thực tế
   enabled: true
 
   # ----------------------------------------------------------
-  # SOURCE POINTS
-  #
-  # 4 điểm trên ảnh camera.
-  #
-  # Thứ tự:
-  # top-left
-  # top-right
-  # bottom-right
-  # bottom-left
+  # ĐIỂM NGUỒN (Source Points)
+  # 4 điểm trên ảnh camera (tọa độ pixel)
+  # Thứ tự: trên-trái → trên-phải → dưới-phải → dưới-trái
   # ----------------------------------------------------------
-
   source_points:
     - [320, 230]
     - [950, 230]
     - [1200, 700]
     - [100, 700]
 
-
   # ----------------------------------------------------------
-  # DESTINATION POINTS
-  #
-  # Hình chữ nhật Bird's Eye View
+  # ĐIỂM ĐÍCH (Destination Points)
+  # Hình chữ nhật Bird's Eye View (tọa độ pixel BEV)
   # ----------------------------------------------------------
-
   destination_points:
     - [0, 0]
     - [800, 0]
     - [800, 1200]
     - [0, 1200]
 
-
   # ----------------------------------------------------------
-  # Pixel -> meter
-  #
-  # Đây chỉ là giá trị MẪU.
-  #
-  # Bạn bắt buộc phải calibration theo camera thực tế.
+  # Tỉ lệ chuyển đổi Pixel → Mét
+  # ⚠️ GIÁ TRỊ MẪU — Cần calibration theo camera thực tế
+  # để đảm bảo tính chính xác của tốc độ và khoảng cách
   # ----------------------------------------------------------
-
   meters_per_pixel_x: 0.05
   meters_per_pixel_y: 0.05
 
 
 # ============================================================
-# TRAJECTORY / INTERPOLATION
+# QUẢN LÝ QUỸ ĐẠO & NỘI SUY (Trajectory & Interpolation)
 # ============================================================
 
 trajectory:
-
-  # Gap tối đa được phép nội suy
+  # Khoảng trống frame tối đa được phép nội suy
   max_interpolation_gap: 15
 
 
 # ============================================================
-# FEATURE EXTRACTION
+# TRÍCH XUẤT ĐẶC TRƯNG ĐỘNG HỌC (Kinematic Feature Extraction)
 # ============================================================
 
 features:
+  # Số frame cửa sổ trượt (sliding window) cho thống kê thời gian
+  temporal_window: 8
 
-  # Gia tốc giảm tốc tối thiểu để xem là sudden stop
-  sudden_stop_deceleration: 3.0
+  # Ngưỡng gia tốc giảm tốc tối thiểu để xác định phanh đột ngột (m/s²)
+  sudden_stop_deceleration: 4.5
 
-  # Thay đổi hướng tối thiểu
+  # Ngưỡng thay đổi hướng tối thiểu để xác định đổi quỹ đạo (độ)
   direction_change_threshold: 45.0
+
+  # Hệ số làm mịn vận tốc EMA (0.25 - 0.35 để lọc triệt để rung lắc bounding box)
+  velocity_smoothing_alpha: 0.30
 
 
 # ============================================================
-# RANDOM FOREST CLASSIFIER
+# MÔ HÌNH PHÂN LOẠI TAI NẠN (Random Forest Classifier)
 # ============================================================
 
 classifier:
-
+  # Bật/tắt mô hình phân loại
   enabled: true
 
+  # Đường dẫn mô hình Random Forest đã huấn luyện
   model: "models/accident_rf_model.pkl"
 
-  # Xác suất từ RF >= threshold
-  # => POSSIBLE ACCIDENT
-  threshold: 0.70
+  # Ngưỡng xác suất để quyết định "CÓ TAI NẠN" (ACCIDENT)
+  # Khuyến nghị: 0.75 - 0.80 để triệt tiêu báo động giả khi xe lưu thông bình thường
+  threshold: 0.75
+
+  # Số frame liên tiếp duy trì trạng thái bất thường để xác nhận sự kiện tai nạn
+  # 8 - 12 frames (~0.25s - 0.4s) để lọc bỏ hoàn toàn rung lắc camera / bounding box jitter
+  confirmation_frames: 8
 
 
 # ============================================================
-# OUTPUT
+# CẤU HÌNH ĐẦU RA (Output Settings)
 # ============================================================
 
 output:
-
+  # Lưu tệp CSV đặc trưng
   save_csv: true
+
+  # Lưu video kết quả
   save_video: true
 
-  # Hiển thị trajectory
+  # Hiển thị quỹ đạo chuyển động trên video
   draw_trajectory: true
 
-  # Hiển thị tọa độ mét
+  # Hiển thị tọa độ thực tế (mét) trên video
   draw_world_position: true
 
-  # Hiển thị speed
+  # Hiển thị tốc độ phương tiện trên video
   draw_speed: true
 
-  # Hiển thị FPS
+  # Hiển thị FPS xử lý trên video
   draw_fps: true
 
-  # Độ dài trajectory vẽ lên frame
+  # Độ dài quỹ đạo hiển thị (số điểm)
   trajectory_length: 50
