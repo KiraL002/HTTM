@@ -172,7 +172,7 @@ class TrafficAccidentPipeline:
             release_threshold=0.35,
             release_frames=12,
             spatial_merge_distance=6.0,
-            min_track_age=6,
+            min_track_age=int(config.get("classifier", {}).get("min_track_age", 2)),
         )
 
         self.accident_detected = False

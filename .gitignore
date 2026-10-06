@@ -21,3 +21,4 @@ dataset/output_features.csv
 .DS_Store
 Thumbs.db
 .cph/
+*_backup.csv

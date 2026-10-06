@@ -66,6 +66,7 @@ yolo:
     - 2   # Ô tô
     - 3   # Xe máy
     - 5   # Xe buýt
+    - 6   # Tàu hỏa / xe lóa đèn ban đêm
     - 7   # Xe tải
 
 
@@ -166,11 +167,11 @@ classifier:
 
   # Ngưỡng xác suất để quyết định "CÓ TAI NẠN" (ACCIDENT)
   # Khuyến nghị: 0.75 - 0.80 để triệt tiêu báo động giả khi xe lưu thông bình thường
-  threshold: 0.75
+  threshold: 0.60
 
   # Số frame liên tiếp duy trì trạng thái bất thường để xác nhận sự kiện tai nạn
   # 8 - 12 frames (~0.25s - 0.4s) để lọc bỏ hoàn toàn rung lắc camera / bounding box jitter
-  confirmation_frames: 8
+  confirmation_frames: 2
 
 
 # ============================================================

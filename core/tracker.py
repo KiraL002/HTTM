@@ -21,11 +21,12 @@ OBJECT_TYPE_MAP: Dict[str, str] = {
     "motorcycle": "vehicle",
     "bus": "vehicle",
     "truck": "vehicle",
+    "train": "vehicle",  # Ho tro cac xe bi loa den ban dem nhan nham thanh train
     "bicycle": "two_wheeler",
     "person": "pedestrian",
 }
 
-DEFAULT_VEHICLE_CLASSES: Set[str] = {"car", "motorcycle", "bus", "truck"}
+DEFAULT_VEHICLE_CLASSES: Set[str] = {"car", "motorcycle", "bus", "truck", "train"}
 
 
 @dataclass
