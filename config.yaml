@@ -167,11 +167,11 @@ classifier:
 
   # Ngưỡng xác suất để quyết định "CÓ TAI NẠN" (ACCIDENT)
   # Khuyến nghị: 0.75 - 0.80 để triệt tiêu báo động giả khi xe lưu thông bình thường
-  threshold: 0.60
+  threshold: 0.75
 
   # Số frame liên tiếp duy trì trạng thái bất thường để xác nhận sự kiện tai nạn
   # 8 - 12 frames (~0.25s - 0.4s) để lọc bỏ hoàn toàn rung lắc camera / bounding box jitter
-  confirmation_frames: 2
+  confirmation_frames: 8
 
 
 # ============================================================
@@ -199,3 +199,13 @@ output:
 
   # Độ dài quỹ đạo hiển thị (số điểm)
   trajectory_length: 50
+
+# ============================================================
+# XÁC THỰC THỊ GIÁC KÉP (Visual Verification - MobileNetV3)
+# ============================================================
+
+visual_verification:
+  enabled: true
+  model: "models/visual_accident_classifier.pth"
+  threshold: 0.40
+

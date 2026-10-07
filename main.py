@@ -398,6 +398,23 @@ class TrafficAccidentPipeline:
                 )
 
         # ----------------------------------------------------
+        # Mô hình xác thực thị giác kép (Visual Verifier - MobileNetV3)
+        # ----------------------------------------------------
+        self.visual_verifier = None
+        visual_cfg = config.get("visual_verification", {})
+        if visual_cfg.get("enabled", True):
+            try:
+                from core.visual_classifier import VisualAccidentVerifier
+                v_model_path = resolve_path(self.project_root, visual_cfg.get("model", "models/visual_accident_classifier.pth"))
+                self.visual_verifier = VisualAccidentVerifier(
+                    model_path=str(v_model_path),
+                    threshold=float(visual_cfg.get("threshold", 0.40)),
+                    device=self.yolo_device,
+                )
+            except Exception as e:
+                print(f"[WARNING] Cannot init visual verifier: {e}")
+
+        # ----------------------------------------------------
         # Trạng thái trước đó (Previous States)
         # Dùng để tính toán: vận tốc, gia tốc, hướng di chuyển
         # ----------------------------------------------------
@@ -695,6 +712,15 @@ class TrafficAccidentPipeline:
                             features_dict
                         )
                     )
+                    # Xác thực kép kết hợp Thị giác (Visual Verification)
+                    if self.visual_verifier is not None and self.visual_verifier.enabled and probability >= 0.50:
+                        visual_prob = self.visual_verifier.verify_crop(frame, track.bbox)
+                        if probability < 0.85 and visual_prob < 0.25:
+                            probability = probability * 0.45
+                            if probability < float(self.config.get("classifier", {}).get("threshold", 0.75)):
+                                status = "NORMAL"
+                        elif visual_prob >= 0.50:
+                            probability = max(probability, 0.5 * probability + 0.5 * visual_prob)
 
                 except Exception as exc:
 

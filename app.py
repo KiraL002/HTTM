@@ -1,12 +1,6 @@
 """
 AcciVision — Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh
-Giao diện Web Dashboard (Streamlit)
-
-Module này cung cấp giao diện web trực quan cho phép người dùng:
-- Tải lên video giao thông để phân tích
-- Theo dõi tiến trình xử lý pipeline
-- Xem kết quả phát hiện tai nạn chi tiết
-- Tải xuống video kết quả và tệp CSV đặc trưng
+Giao diện Web Dashboard (Streamlit) — Tối Giản, Hiện Đại & Chuyên Nghiệp
 """
 
 from __future__ import annotations
@@ -14,6 +8,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from main import (
@@ -21,268 +16,293 @@ from main import (
     load_config,
 )
 
-
 # ============================================================
 # CẤU HÌNH TRANG (Page Configuration)
 # ============================================================
 
 st.set_page_config(
-    page_title="AcciVision — Phát Hiện Tai Nạn Giao Thông",
+    page_title="AcciVision — Giám Sát & Phát Hiện Tai Nạn",
     page_icon="🚦",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
-
 
 # ============================================================
-# HEADER — TIÊU ĐỀ HỆ THỐNG
+# GIAO DIỆN TÙY BIẾN (Modern Clean Custom CSS)
 # ============================================================
 
-st.title(
-    "🚦 AcciVision — Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh"
+st.markdown(
+    """
+    <style>
+    /* Tổng thể typography & padding */
+    .block-container {
+        padding-top: 1.8rem;
+        padding-bottom: 2.5rem;
+        max-width: 1200px;
+    }
+    
+    /* Header Card */
+    .hero-header {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 24px 28px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.15);
+    }
+    .hero-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #f8fafc;
+        margin: 0 0 6px 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .hero-subtitle {
+        font-size: 0.95rem;
+        color: #94a3b8;
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    /* Metric Cards */
+    div[data-testid="stMetric"] {
+        background: #1e293b15;
+        border: 1px solid rgba(148, 163, 184, 0.15);
+        border-radius: 12px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    div[data-testid="stMetricLabel"] p {
+        font-size: 0.82rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #64748b !important;
+    }
+    div[data-testid="stMetricValue"] div {
+        font-size: 1.5rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* Primary Button */
+    div.stButton > button[kind="primary"] {
+        border-radius: 10px;
+        font-weight: 600;
+        padding: 0.6rem 1.2rem;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        border: none;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+        transition: all 0.2s ease;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+        transform: translateY(-1px);
+    }
+
+    /* Alert Banner Clean Styling */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    .status-badge.danger {
+        background-color: rgba(239, 68, 68, 0.12);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.25);
+    }
+    .status-badge.safe {
+        background-color: rgba(34, 197, 94, 0.12);
+        color: #22c55e;
+        border: 1px solid rgba(34, 197, 94, 0.25);
+    }
+
+    /* Clean Card Container */
+    .clean-card {
+        background: #1e293b08;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 12px;
+        padding: 18px 20px;
+        margin-bottom: 16px;
+    }
+
+    /* Tabs Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        padding-bottom: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        font-weight: 500;
+        padding: 8px 16px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.caption(
-    "Sử dụng Thị giác Máy tính (YOLOv8 + ByteTrack) kết hợp "
-    "Chuyển đổi Phối cảnh & Phân loại Học máy (Random Forest) "
-    "để phát hiện và phân loại tai nạn giao thông từ video."
-)
-
-st.divider()
-
 
 # ============================================================
 # NẠP CẤU HÌNH (Load Configuration)
 # ============================================================
 
-PROJECT_ROOT = (
-    Path(__file__).resolve().parent
-)
-
-CONFIG_PATH = (
-    PROJECT_ROOT / "config.yaml"
-)
+PROJECT_ROOT = Path(__file__).resolve().parent
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 try:
-    config = load_config(
-        str(CONFIG_PATH)
-    )
+    config = load_config(str(CONFIG_PATH))
 except Exception as exc:
-    st.error(
-        f"❌ Không thể nạp tệp cấu hình config.yaml: {exc}"
-    )
+    st.error(f"❌ Không thể nạp tệp cấu hình config.yaml: {exc}")
     st.stop()
 
-
 # ============================================================
-# THANH BÊN — CẤU HÌNH HỆ THỐNG (Sidebar Configuration)
-# ============================================================
-
-st.sidebar.image(
-    "https://img.icons8.com/fluency/96/traffic-light.png",
-    width=64,
-)
-
-st.sidebar.title("⚙️ Cấu Hình Hệ Thống")
-
-st.sidebar.markdown("---")
-
-st.sidebar.subheader("📷 Mô hình phát hiện")
-st.sidebar.code(
-    config["yolo"]["model"],
-    language=None,
-)
-
-st.sidebar.subheader("🧠 Mô hình phân loại")
-st.sidebar.code(
-    config["classifier"]["model"],
-    language=None,
-)
-
-st.sidebar.subheader("📊 Tinh chỉnh độ nhạy (Tùy chọn)")
-sidebar_yolo_conf = st.sidebar.slider(
-    "Ngưỡng tin cậy YOLO",
-    min_value=0.15,
-    max_value=0.70,
-    value=float(config["yolo"]["confidence"]),
-    step=0.05,
-    help="Độ tin cậy tối thiểu để YOLO nhận diện phương tiện.",
-)
-sidebar_thresh = st.sidebar.slider(
-    "Ngưỡng phát hiện tai nạn",
-    min_value=0.50,
-    max_value=0.95,
-    value=float(config["classifier"].get("threshold", 0.75)),
-    step=0.05,
-    help="Tăng ngưỡng lên 0.75 - 0.85 để triệt tiêu báo động giả khi xe lưu thông bình thường.",
-)
-sidebar_conf_frames = st.sidebar.slider(
-    "Số frame xác nhận",
-    min_value=4,
-    max_value=20,
-    value=int(config["classifier"].get("confirmation_frames", 8)),
-    step=1,
-    help="Số frame liên tiếp duy trì trạng thái bất thường để chốt tai nạn. Tăng giá trị để loại bỏ rung lắc camera.",
-)
-
-st.sidebar.markdown("---")
-
-st.sidebar.subheader("🔧 Phối cảnh (Perspective)")
-perspective_status = "✅ Bật" if config["perspective"]["enabled"] else "❌ Tắt"
-st.sidebar.write(f"Trạng thái: {perspective_status}")
-
-st.sidebar.markdown("---")
-st.sidebar.caption(
-    "AcciVision v1.0 — Hệ thống phát hiện tai nạn giao thông thông minh"
-)
-
-
-# ============================================================
-# KHU VỰC CHÍNH — TẢI VIDEO & PHÂN TÍCH
+# THANH BÊN (Sidebar — Gọn gàng & Tối giản)
 # ============================================================
 
-st.subheader("📤 Bước 1: Tải lên video giao thông")
+with st.sidebar:
+    st.markdown("### 🚦 AcciVision")
+    st.caption("Hệ thống phân tích & phát hiện va chạm tự động")
 
-uploaded_file = st.file_uploader(
-    "Chọn tệp video giao thông cần phân tích",
-    type=[
-        "mp4",
-        "avi",
-        "mov",
-        "mkv",
-    ],
-    help="Hỗ trợ định dạng: MP4, AVI, MOV, MKV. Khuyến nghị video từ camera giám sát giao thông.",
-)
+    st.markdown("---")
 
+    # Tùy chỉnh tham số được gom gọn vào Expander để tránh chiếm diện tích
+    with st.expander("⚙️ Tùy chỉnh nâng cao", expanded=False):
+        sidebar_yolo_conf = st.slider(
+            "Độ tin cậy YOLO",
+            min_value=0.15,
+            max_value=0.70,
+            value=float(config["yolo"]["confidence"]),
+            step=0.05,
+            help="Ngưỡng phát hiện phương tiện tối thiểu.",
+        )
+        sidebar_thresh = st.slider(
+            "Ngưỡng xác định tai nạn",
+            min_value=0.50,
+            max_value=0.95,
+            value=float(config["classifier"].get("threshold", 0.75)),
+            step=0.05,
+            help="Tăng ngưỡng để triệt tiêu báo động giả trong điều kiện mật độ cao.",
+        )
+        sidebar_conf_frames = st.slider(
+            "Số frame xác nhận",
+            min_value=4,
+            max_value=20,
+            value=int(config["classifier"].get("confirmation_frames", 8)),
+            step=1,
+            help="Số frame liên tiếp duy trì để chốt sự kiện va chạm.",
+        )
 
-if uploaded_file is not None:
-
-    st.video(
-        uploaded_file
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="font-size: 0.8rem; color: #64748b; line-height: 1.4;">
+            <b>Trạng thái:</b> Sẵn sàng hoạt động<br>
+            <b>Phiên bản:</b> v1.0.0
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.subheader("⚙️ Bước 2: Tùy chọn xử lý")
+# ============================================================
+# HEADER CHÍNH
+# ============================================================
 
-    col_opt1, col_opt2 = st.columns(2)
+st.markdown(
+    """
+    <div class="hero-header">
+        <div class="hero-title">
+            <span>🚦</span> AcciVision Dashboard
+        </div>
+        <p class="hero-subtitle">
+            Hệ thống phát hiện và phân tích tai nạn giao thông thông minh từ camera giám sát.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    with col_opt1:
+# ============================================================
+# KHU VỰC TẢI & THIẾT LẬP VIDEO
+# ============================================================
+
+uploaded_file = st.file_uploader(
+    "Tải lên video giao thông cần phân tích (MP4, AVI, MOV, MKV)",
+    type=["mp4", "avi", "mov", "mkv"],
+    help="Hỗ trợ các định dạng video chuẩn từ camera giám sát.",
+)
+
+if uploaded_file is not None:
+    # Bố cục 2 cột: Xem trước video gốc & Tùy chọn xử lý
+    col_preview, col_action = st.columns([1.1, 0.9])
+
+    with col_preview:
+        st.video(uploaded_file)
+
+    with col_action:
+        st.markdown("##### ⚙️ Tùy chọn xuất kết quả")
         save_output_video = st.checkbox(
-            "🎬 Xuất video kết quả (vẽ BBox + Quỹ đạo)",
+            "🎬 Vẽ hộp phát hiện & quỹ đạo (Bounding Box)",
             value=True,
-            help=(
-                "Tạo video đầu ra có vẽ bounding box, quỹ đạo chuyển động "
-                "và trạng thái phát hiện. Bỏ chọn để tăng tốc xử lý 2-3 lần."
-            ),
+            help="Xuất video có đánh dấu phương tiện và sự kiện va chạm.",
         )
-
-    with col_opt2:
         save_csv = st.checkbox(
-            "📊 Xuất tệp CSV đặc trưng",
+            "📊 Trích xuất dữ liệu đặc trưng (CSV)",
             value=True,
-            help="Lưu toàn bộ đặc trưng động học trích xuất được vào tệp CSV.",
+            help="Ghi lại các thông số tốc độ, gia tốc và góc di chuyển.",
         )
 
-    st.subheader("🚀 Bước 3: Bắt đầu phân tích")
-
-    if st.button(
-        "▶ Bắt Đầu Phát Hiện Tai Nạn",
-        type="primary",
-        use_container_width=True,
-    ):
-
-        # ----------------------------------------------------
-        # Lưu video tạm thời
-        # ----------------------------------------------------
-
-        suffix = Path(
-            uploaded_file.name
-        ).suffix
-
-        with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=suffix,
-        ) as temp_file:
-
-            temp_file.write(
-                uploaded_file.getbuffer()
-            )
-
-            temp_video_path = Path(
-                temp_file.name
-            )
-
-        # ----------------------------------------------------
-        # Ghi đè cấu hình video đầu vào
-        # ----------------------------------------------------
-
-        config["video"]["input"] = (
-            str(temp_video_path)
+        st.write("")
+        run_analysis = st.button(
+            "▶ Bắt đầu phân tích video",
+            type="primary",
+            use_container_width=True,
         )
 
-        # Streamlit không sử dụng cửa sổ OpenCV
+    # Tự động dọn session state nếu người dùng chọn video khác
+    if "last_analyzed_file" in st.session_state and st.session_state["last_analyzed_file"] != uploaded_file.name:
+        st.session_state.pop("analysis_result", None)
+
+    # ----------------------------------------------------
+    # QUÁ TRÌNH XỬ LÝ (KHI BẤM NÚT)
+    # ----------------------------------------------------
+    if run_analysis:
+        suffix = Path(uploaded_file.name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(uploaded_file.getbuffer())
+            temp_video_path = Path(temp_file.name)
+
+        # Cập nhật thông số vào config
+        config["video"]["input"] = str(temp_video_path)
         config["video"]["display"] = False
-
         config["video"]["save_output"] = save_output_video
-
         config["yolo"]["confidence"] = sidebar_yolo_conf
         config["classifier"]["threshold"] = sidebar_thresh
         config["classifier"]["confirmation_frames"] = sidebar_conf_frames
-
         config["output"]["save_video"] = save_output_video
         config["output"]["save_csv"] = save_csv
 
-        # ----------------------------------------------------
-        # Cấu hình đường dẫn đầu ra
-        # ----------------------------------------------------
+        outputs_dir = PROJECT_ROOT / "outputs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
 
-        outputs_dir = (
-            PROJECT_ROOT / "outputs"
-        )
+        output_video = (outputs_dir / f"{uploaded_file.name}").with_suffix(".mp4")
+        config["video"]["output"] = str(output_video)
 
-        outputs_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        csv_output = outputs_dir / "streamlit_features.csv"
+        config["video"]["features_csv"] = str(csv_output)
 
-        output_video = (
-            outputs_dir
-            / f"{uploaded_file.name}"
-        )
-
-        # Đảm bảo định dạng MP4
-        output_video = (
-            output_video.with_suffix(
-                ".mp4"
-            )
-        )
-
-        config["video"]["output"] = (
-            str(output_video)
-        )
-
-        csv_output = (
-            outputs_dir
-            / "streamlit_features.csv"
-        )
-
-        config["video"][
-            "features_csv"
-        ] = str(csv_output)
-
-        # ----------------------------------------------------
-        # Khởi tạo và chạy Pipeline
-        # ----------------------------------------------------
-
-        pipeline = (
-            TrafficAccidentPipeline(
-                config=config,
-                project_root=PROJECT_ROOT,
-            )
+        pipeline = TrafficAccidentPipeline(
+            config=config,
+            project_root=PROJECT_ROOT,
         )
 
         progress_bar = st.progress(0)
         status_text = st.empty()
-
-        # Chỉ cập nhật progress bar mỗi 1% để tránh làm chậm pipeline
         last_progress_percent = [-1]
 
         def update_progress(value: float) -> None:
@@ -292,97 +312,86 @@ if uploaded_file is not None:
                 progress_bar.progress(value)
 
         try:
+            with st.spinner("🔄 Đang phân tích luồng video — Vui lòng chờ..."):
+                result = pipeline.run(progress_callback=update_progress)
 
-            with st.spinner(
-                "🔄 Đang phân tích video — Vui lòng chờ..."
-            ):
+            progress_bar.empty()
+            status_text.empty()
 
-                result = pipeline.run(
-                    progress_callback=update_progress
-                )
+            # LƯU KẾT QUẢ VÀO SESSION STATE ĐỂ GIỮ NGUYÊN GIAO DIỆN KHI DOWNLOAD
+            st.session_state["analysis_result"] = result
+            st.session_state["last_analyzed_file"] = uploaded_file.name
+            st.session_state["save_output_video_opt"] = save_output_video
 
-            status_text.success(
-                "✅ Phân tích hoàn tất!"
+        except Exception as exc:
+            st.error("❌ Quá trình phân tích gặp lỗi. Vui lòng kiểm tra video đầu vào.")
+            st.exception(exc)
+
+    # ========================================================
+    # HIỂN THỊ KẾT QUẢ TẬP TRUNG (DUY TRÌ TRẠNG THÁI TRANG WEB)
+    # ========================================================
+    if "analysis_result" in st.session_state and st.session_state.get("last_analyzed_file") == uploaded_file.name:
+        result = st.session_state["analysis_result"]
+        save_output_video_saved = st.session_state.get("save_output_video_opt", True)
+        events = result.get("events", [])
+        has_accident = len(events) > 0
+
+        st.markdown("### 📊 Kết Quả Phân Tích")
+
+        # 4 Thẻ KPI Tóm Tắt (Gọn gàng, không trùng lặp)
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric(
+                label="Kết luận tổng quát",
+                value="🚨 CÓ TAI NẠN" if has_accident else "✅ AN TOÀN",
+            )
+        with m2:
+            st.metric(
+                label="Số vụ va chạm",
+                value=f"{len(events)} vụ",
+            )
+        with m3:
+            st.metric(
+                label="Tổng số khung hình",
+                value=f"{result['frames_processed']:,}",
+            )
+        with m4:
+            st.metric(
+                label="Tốc độ xử lý",
+                value=f"{result['average_fps']:.1f} FPS",
             )
 
-            # ================================================
-            # HIỂN THỊ KẾT QUẢ PHÂN TÍCH
-            # ================================================
+        st.write("")
 
-            st.divider()
+        # Phân tách nội dung bằng Tabs thay vì cuộn dài
+        tab_video, tab_events, tab_export = st.tabs(
+            ["🎬 Video Kết Quả", "🚨 Chi Tiết Sự Kiện", "📁 Xuất Dữ Liệu"]
+        )
 
-            st.header(
-                "📊 Kết Quả Phân Tích — AcciVision"
-            )
-
-            events = result.get("events", [])
-            has_accident = len(events) > 0
-
-            # ------------------------------------------------
-            # 4 Thẻ Chỉ Số Tổng Quan (Metric Cards)
-            # ------------------------------------------------
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric(
-                    "📌 KẾT LUẬN VIDEO",
-                    "🚨 CÓ TAI NẠN" if has_accident else "✅ AN TOÀN",
-                    delta="Phát hiện sự cố" if has_accident else "Không có tai nạn",
-                    delta_color="inverse" if has_accident else "normal",
-                )
-
-            with col2:
-                st.metric(
-                    "🚨 Số vụ tai nạn",
-                    f"{len(events)} vụ",
-                )
-
-            with col3:
-                st.metric(
-                    "🎞️ Tổng số Frame",
-                    f"{result['frames_processed']:,}",
-                )
-
-            with col4:
-                st.metric(
-                    "⚡ Tốc độ xử lý",
-                    f"{result['average_fps']:.1f} FPS",
-                )
-
-            # ------------------------------------------------
-            # Banner Trạng Thái (Status Banner)
-            # ------------------------------------------------
-
-            if has_accident:
-                st.error(
-                    f"🚨 **KẾT LUẬN: VIDEO CÓ XẢY RA TAI NẠN GIAO THÔNG** — "
-                    f"Hệ thống xác định chính xác {len(events)} vụ va chạm trong video."
-                )
+        # --- TAB 1: VIDEO KẾT QUẢ ---
+        with tab_video:
+            if save_output_video_saved and Path(result["video_output"]).exists():
+                st.video(result["video_output"])
             else:
-                st.success(
-                    "✅ **KẾT LUẬN: VIDEO KHÔNG CÓ TAI NẠN** — "
-                    "Toàn bộ quá trình lưu thông bình thường, an toàn."
-                )
+                if not save_output_video_saved:
+                    st.info("ℹ️ Tùy chọn xuất video đã tắt để tối ưu tốc độ phân tích.")
+                else:
+                    st.warning("⚠️ Không tìm thấy tệp video đầu ra.")
 
-            # ------------------------------------------------
-            # Bảng Phân Loại Tai Nạn
-            # ------------------------------------------------
-
+        # --- TAB 2: CHI TIẾT SỰ KIỆN ---
+        with tab_events:
             ACCIDENT_TYPE_MAP = {
-                "rear_end_collision": "🚗💥🚙 Va chạm phía sau (Rear-end)",
-                "head_on_collision": "🚙💥🚗 Va chạm đối đầu (Head-on)",
-                "side_impact_collision": "🚗💥🏎️ Va chạm sườn/chữ T (Side Impact)",
-                "multi_vehicle_pileup": "🚗💥🚙💥🚛 Va chạm liên hoàn (Pileup)",
-                "single_vehicle_spin_or_rollover": "🔄🚗 Mất lái quay vòng/lật (Spin/Rollover)",
-                "single_vehicle_loss_of_control": "⚠️🚗 Mất lái chệch quỹ đạo (Loss of Control)",
-                "single_vehicle_sudden_stop": "🛑🚗 Dừng đột ngột/đâm vật cản (Sudden Stop)",
-                "single_vehicle_incident": "⚠️ Sự cố đơn phương tiện",
-                "vehicle_collision": "💥 Va chạm phương tiện",
-                "unknown": "❓ Chưa xác định",
+                "rear_end_collision": "Va chạm phía sau (Rear-end)",
+                "head_on_collision": "Va chạm đối đầu (Head-on)",
+                "side_impact_collision": "Va chạm sườn/chữ T (Side Impact)",
+                "multi_vehicle_pileup": "Va chạm liên hoàn (Pileup)",
+                "single_vehicle_spin_or_rollover": "Mất lái quay vòng / lật xe",
+                "single_vehicle_loss_of_control": "Mất lái chệch làn",
+                "single_vehicle_sudden_stop": "Phanh gấp / va chạm vật cản",
+                "single_vehicle_incident": "Sự cố đơn phương tiện",
+                "vehicle_collision": "Va chạm phương tiện",
+                "unknown": "Chưa xác định",
             }
-
-            st.subheader("🚨 Chi Tiết Các Sự Kiện Tai Nạn")
 
             if events:
                 table_rows = []
@@ -395,205 +404,86 @@ if uploaded_file is not None:
                     tids = e.get("track_ids", [])
                     v_types = e.get("vehicle_types", {})
                     vehicles_str = (
-                        ", ".join(
-                            [
-                                f"ID:{tid} ({v_types.get(tid, 'phương tiện')})"
-                                for tid in tids
-                            ]
-                        )
+                        ", ".join([f"ID {tid} ({v_types.get(tid, 'xe')})" for tid in tids])
                         if tids
                         else "Không xác định"
                     )
 
-                    start_s = e.get(
-                        "start_time_s",
-                        e.get("start_frame", 0) / 30.0,
-                    )
-                    end_s = e.get(
-                        "end_time_s",
-                        e.get("end_frame", 0) / 30.0,
-                    )
-                    duration = e.get(
-                        "duration_s",
-                        end_s - start_s,
-                    )
+                    start_s = e.get("start_time_s", e.get("start_frame", 0) / 30.0)
+                    end_s = e.get("end_time_s", e.get("end_frame", 0) / 30.0)
+                    duration = e.get("duration_s", end_s - start_s)
 
                     table_rows.append(
                         {
-                            "Mã sự kiện": f"#{e['event_id']}",
-                            "Loại tai nạn": type_display,
+                            "Mã": f"#{e['event_id']}",
+                            "Phân loại va chạm": type_display,
                             "Phương tiện liên quan": vehicles_str,
-                            "Thời điểm bắt đầu": f"{start_s:.2f}s (Frame {e['start_frame']})",
-                            "Thời điểm kết thúc": f"{end_s:.2f}s (Frame {e['end_frame']})",
-                            "Thời lượng": f"{duration:.2f}s",
-                            "Xác suất": f"{e.get('probability', 0.0) * 100:.1f}%",
-                            "Trạng thái": "🔴 Đang diễn ra" if e.get("active") else "⚪ Đã kết thúc",
+                            "Thời gian": f"{start_s:.1f}s ➔ {end_s:.1f}s ({duration:.1f}s)",
+                            "Độ tin cậy": f"{e.get('probability', 0.0) * 100:.1f}%",
+                            "Trạng thái": "Đang diễn ra" if e.get("active") else "Đã kết thúc",
                         }
                     )
 
                 st.dataframe(
-                    __import__("pandas").DataFrame(table_rows),
+                    pd.DataFrame(table_rows),
                     use_container_width=True,
                     hide_index=True,
                 )
-
-                st.caption(
-                    "📌 **Ghi chú:** Track ID là mã định danh phiên theo dõi (ByteTrack session ID), "
-                    "không phải biển số xe thực tế."
-                )
-
-                # Chi tiết từng sự kiện (Expandable Cards)
-                for e in events:
-                    raw_type = e.get("accident_type", "unknown")
-                    type_display = ACCIDENT_TYPE_MAP.get(
-                        raw_type,
-                        raw_type.replace("_", " ").title(),
-                    )
-                    with st.expander(
-                        f"🔍 Chi tiết Sự kiện #{e['event_id']} — {type_display}"
-                    ):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown("**⏱️ Thông tin thời gian:**")
-                            st.write(
-                                f"- Bắt đầu: **{e.get('start_time_s', 0):.2f}s** (Frame {e['start_frame']})"
-                            )
-                            st.write(
-                                f"- Kết thúc: **{e.get('end_time_s', 0):.2f}s** (Frame {e['end_frame']})"
-                            )
-                            st.write(
-                                f"- Thời lượng: **{e.get('duration_s', 0):.2f}s** "
-                                f"({e.get('end_frame', 0) - e['start_frame'] + 1} frames)"
-                            )
-                            st.write(
-                                f"- Xác suất tai nạn: **{e.get('probability', 0.0) * 100:.1f}%**"
-                            )
-                        with c2:
-                            tids = e.get("track_ids", [])
-                            v_types = e.get("vehicle_types", {})
-                            st.markdown("**🚗 Phương tiện liên quan:**")
-                            st.write(f"- Số phương tiện: **{len(tids)}**")
-                            for tid in tids:
-                                vtype = v_types.get(tid, "phương tiện")
-                                st.write(
-                                    f"- Phương tiện **ID {tid}** ({vtype})"
-                                )
-                            if e.get("description"):
-                                st.markdown("**📝 Mô tả:**")
-                                st.write(e["description"])
             else:
-                st.info(
-                    "✅ Không phát hiện sự kiện tai nạn nào trong toàn bộ video. "
-                    "Giao thông hoạt động bình thường."
-                )
+                st.success("✅ Toàn bộ video không ghi nhận bất kỳ sự cố va chạm nào.")
 
-            # ------------------------------------------------
-            # Video kết quả đầu ra
-            # ------------------------------------------------
+        # --- TAB 3: XUẤT DỮ LIỆU ---
+        with tab_export:
+            col_dl1, col_dl2 = st.columns(2)
 
-            if save_output_video and Path(
-                result["video_output"]
-            ).exists():
-
-                st.subheader(
-                    "🎬 Video Kết Quả"
-                )
-
-                st.video(
-                    result["video_output"]
-                )
-
-                # Nút tải xuống video
-                with open(result["video_output"], "rb") as video_file:
+            with col_dl1:
+                if save_output_video_saved and Path(result["video_output"]).exists():
+                    with open(result["video_output"], "rb") as vf:
+                        video_bytes = vf.read()
                     st.download_button(
-                        label="📥 Tải xuống Video kết quả",
-                        data=video_file,
+                        label="📥 Tải xuống Video Kết Quả (.mp4)",
+                        data=video_bytes,
                         file_name=Path(result["video_output"]).name,
                         mime="video/mp4",
+                        use_container_width=True,
+                        key="dl_btn_result_video",
                     )
+                else:
+                    st.write("Không có video xuất kèm.")
 
-            # ------------------------------------------------
-            # Tệp CSV đặc trưng
-            # ------------------------------------------------
-
-            csv_path = Path(
-                result["features_csv"]
-            )
-
-            if csv_path.exists():
-
-                st.subheader(
-                    "📋 Dữ Liệu Đặc Trưng Trích Xuất"
-                )
-
-                df_features = __import__(
-                    "pandas"
-                ).read_csv(
-                    csv_path
-                ).head(100)
-
-                st.dataframe(
-                    df_features,
-                    use_container_width=True,
-                )
-
-                st.caption(
-                    f"Hiển thị 100 dòng đầu tiên. Tổng số dòng: {len(df_features)}"
-                )
-
-                with csv_path.open(
-                    "rb"
-                ) as file:
-
+            with col_dl2:
+                csv_path = Path(result["features_csv"])
+                if csv_path.exists():
+                    with csv_path.open("rb") as cf:
+                        csv_bytes = cf.read()
                     st.download_button(
-                        label="📥 Tải xuống tệp CSV đặc trưng",
-                        data=file,
+                        label="📥 Tải xuống Bảng Đặc Trưng (.csv)",
+                        data=csv_bytes,
                         file_name=csv_path.name,
                         mime="text/csv",
+                        use_container_width=True,
+                        key="dl_btn_features_csv",
                     )
+                else:
+                    st.write("Không có file CSV đặc trưng.")
 
-        except Exception as exc:
-
-            st.error(
-                "❌ Pipeline xử lý gặp lỗi. Vui lòng kiểm tra video đầu vào và thử lại."
-            )
-
-            st.exception(
-                exc
-            )
+            # Xem trước dữ liệu đặc trưng dưới dạng thu gọn tùy chọn
+            if Path(result["features_csv"]).exists():
+                with st.expander("🔍 Xem trước bảng số liệu đặc trưng (50 dòng đầu)", expanded=False):
+                    df_preview = pd.read_csv(result["features_csv"]).head(50)
+                    st.dataframe(df_preview, use_container_width=True)
 
 else:
-    # Hiển thị hướng dẫn khi chưa có video
-    st.info(
-        "👆 Vui lòng tải lên video giao thông để bắt đầu phân tích. "
-        "Hệ thống hỗ trợ các định dạng: MP4, AVI, MOV, MKV."
+    # Khi chưa tải video: Hiển thị giao diện hướng dẫn tối giản, gọn gàng
+    st.markdown(
+        """
+        <div class="clean-card" style="text-align: center; padding: 36px 20px;">
+            <div style="font-size: 2.2rem; margin-bottom: 10px;">📹</div>
+            <h4 style="margin-bottom: 8px;">Chưa có video được chọn</h4>
+            <p style="color: #64748b; font-size: 0.95rem; max-width: 500px; margin: 0 auto;">
+                Hãy kéo thả hoặc chọn tệp video giám sát giao thông ở trên để bắt đầu phân tích và phát hiện va chạm tự động.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-
-    # Giới thiệu quy trình hệ thống
-    st.subheader("📖 Quy Trình Hoạt Động Của AcciVision")
-
-    col_a, col_b, col_c = st.columns(3)
-
-    with col_a:
-        st.markdown(
-            "### 1️⃣ Phát hiện & Theo dõi\n"
-            "- YOLOv8 phát hiện phương tiện\n"
-            "- ByteTrack theo dõi liên tục\n"
-            "- Quản lý quỹ đạo chuyển động"
-        )
-
-    with col_b:
-        st.markdown(
-            "### 2️⃣ Trích xuất đặc trưng\n"
-            "- Chuyển đổi phối cảnh Bird's Eye View\n"
-            "- Tính toán tốc độ, gia tốc, hướng di chuyển\n"
-            "- Phân tích tương tác giữa các phương tiện"
-        )
-
-    with col_c:
-        st.markdown(
-            "### 3️⃣ Phân loại & Cảnh báo\n"
-            "- Random Forest phân loại tai nạn\n"
-            "- Quản lý vòng đời sự kiện\n"
-            "- Xuất báo cáo chi tiết"
-        )
