@@ -1,10 +1,15 @@
-ultralytics
-opencv-python
-numpy
-pandas
-scikit-learn
-pyyaml
-joblib
-torch
-torchvision
-streamlit
+# Versions verified in the Windows CPU environment used by the saved models.
+ultralytics==8.4.152
+opencv-python==5.0.0.93
+numpy==2.5.3
+pandas==3.0.5
+scikit-learn==1.9.1
+pyyaml==6.0.3
+joblib==1.6.0
+torch==2.14.0
+torchvision==0.29.0
+streamlit==1.63.0
+pytorchvideo==0.1.5
+fvcore==0.1.5.post20221221
+iopath==0.1.10
+imageio-ffmpeg==0.6.0

@@ -116,7 +116,17 @@ class ByteTrackTracker:
         classes: Optional[List[int]] = None,
         vehicle_class_names: Optional[List[str]] = None,
         vehicle_only: bool = True,
+        imgsz: int = 640,
+        max_det: int = 300,
+        agnostic_nms: bool = False,
     ) -> None:
+        if isinstance(imgsz, bool) or not isinstance(imgsz, (int, np.integer)) or imgsz <= 0:
+            raise ValueError("imgsz must be a positive integer")
+        if isinstance(max_det, bool) or not isinstance(max_det, (int, np.integer)) or max_det <= 0:
+            raise ValueError("max_det must be a positive integer")
+        if not isinstance(agnostic_nms, bool):
+            raise ValueError("agnostic_nms must be a boolean")
+
         self.model_path = model_path
         self.confidence = float(confidence)
         self.iou_threshold = float(iou_threshold)
@@ -124,6 +134,9 @@ class ByteTrackTracker:
         self.device = device
         self.classes = classes
         self.vehicle_only = bool(vehicle_only)
+        self.imgsz = int(imgsz)
+        self.max_det = int(max_det)
+        self.agnostic_nms = agnostic_nms
 
         if vehicle_class_names:
             self.vehicle_class_names = {x.lower().strip() for x in vehicle_class_names}
@@ -146,6 +159,9 @@ class ByteTrackTracker:
             "tracker": self.tracker_config,
             "conf": self.confidence,
             "iou": self.iou_threshold,
+            "imgsz": self.imgsz,
+            "max_det": self.max_det,
+            "agnostic_nms": self.agnostic_nms,
             "verbose": False,
         }
 

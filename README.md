@@ -1,194 +1,72 @@
-# 🚗 AcciVision — Hệ Thống Phát Hiện Tai Nạn Giao Thông Thông Minh
+# AcciVision
 
-> **AcciVision** (Accident + Vision) là hệ thống phát hiện tai nạn giao thông thời gian thực sử dụng Thị giác Máy tính (Computer Vision) và Học Máy (Machine Learning).
+Ứng dụng Streamlit phân tích video giao thông trên máy tính. Theo dõi ô tô, xe tải, xe buýt, xe máy, xe đạp và người đi bộ. Nhận diện sự cố hiện chỉ áp dụng cho ô tô, xe tải, xe buýt; kết quả là **nghi sự cố**, chưa phải xác nhận tai nạn bởi con người.
 
----
+## Chạy ứng dụng
 
-## 📋 Tổng Quan Hệ Thống
+### Cài mới từ GitHub trên Windows
 
-Hệ thống AcciVision sử dụng pipeline xử lý đa tầng để phân tích video giao thông và phát hiện sự kiện tai nạn:
-
-```
-Video đầu vào
-    ↓
-[1] Phát hiện phương tiện (YOLOv8)
-    ↓
-[2] Theo dõi đa đối tượng (ByteTrack)
-    ↓
-[3] Quản lý quỹ đạo (Trajectory Management)
-    ↓
-[4] Chuyển đổi phối cảnh (Perspective Transform → Bird's Eye View)
-    ↓
-[5] Trích xuất đặc trưng động học (Kinematic Feature Extraction)
-    ↓
-[6] Phân loại tai nạn (Random Forest Classifier)
-    ↓
-[7] Phát hiện & quản lý sự kiện (Event Detection & Lifecycle)
-    ↓
-Video kết quả + Báo cáo CSV + Dashboard
-```
-
-### Các Loại Tai Nạn Phát Hiện Được
-
-| Loại tai nạn | Mô tả |
-| :--- | :--- |
-| Va chạm phía sau (Rear-end) | Xe đâm vào đuôi xe phía trước |
-| Va chạm đối đầu (Head-on) | Hai xe đâm trực diện từ hai hướng ngược nhau |
-| Va chạm sườn/chữ T (Side Impact) | Xe đâm vào sườn xe khác |
-| Va chạm liên hoàn (Pileup) | Nhiều xe va chạm liên tiếp |
-| Mất lái quay vòng (Spin/Rollover) | Xe mất kiểm soát xoay vòng hoặc lật |
-| Mất lái chệch quỹ đạo (Loss of Control) | Xe chệch khỏi làn đường |
-| Dừng đột ngột (Sudden Stop) | Phanh gấp hoặc đâm vật cản |
-
----
-
-## 🛠 Cài Đặt
-
-### Yêu Cầu Hệ Thống
-- Python 3.9 trở lên
-- pip (Python Package Manager)
-
-### Bước 1: Tạo Môi Trường Ảo
+Dùng Python 3.14, tương ứng môi trường đã kiểm tra với các mô hình lưu trong repo:
 
 ```powershell
-# Windows PowerShell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+git clone https://github.com/KiraL002/HTTM.git
+cd HTTM
+py -3.14 -m venv venv
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-```bash
-# Linux / macOS
-python3 -m venv venv
-source venv/bin/activate
+Repo chứa mã nguồn, cấu hình và các trọng số cần cho ứng dụng. Video gốc, bộ dữ liệu huấn luyện, cache, lịch sử và video kết quả không được đưa lên GitHub. Sau khi cài, chọn **Tải video** để dùng video trên máy; có thể đặt video mẫu riêng trong `dataset/input_video/`. Không cần tải toàn bộ bộ dữ liệu để chạy ứng dụng. Lịch sử được tạo mới trên máy chạy.
+
+Ứng dụng kiểm tra checksum mã nguồn và trọng số. Giữ nguyên byte tệp khi clone (repo có `.gitattributes` ngăn đổi kiểu xuống dòng). Sửa mã suy luận cần kiểm tra lại cấu hình toàn vẹn trước khi sử dụng kết quả lưu. Bản mặc định dùng CPU; video có thể mất nhiều phút để xử lý.
+
+### Chạy sau khi đã cài
+
+Nhấp đúp `Chay_demo.cmd`, hoặc chạy tại `D:\HTTM`:
+
+```powershell
+.\venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-### Bước 2: Cài Đặt Thư Viện
+Mở http://127.0.0.1:8501. Chọn video mẫu hoặc tải MP4/MOV/AVI/MKV, tối đa 200 MB và khoảng 2 phút.
 
-```bash
-pip install -r requirements.txt
-```
+- **Bắt đầu phân tích / Phân tích lại**: chạy toàn bộ mô hình từ video gốc. Dữ liệu suy luận trung gian nằm trong thư mục tạm và tự dọn khi kết thúc.
+- **Mở kết quả đã lưu**: mở nhanh kết quả đã có, không chạy mô hình lại.
+- **Lịch sử**: xem sự kiện, ID xe, ảnh bằng chứng và video kết quả. Mục **Xóa lịch sử và kết quả đã lưu** xóa các bản ghi cùng video/ảnh đầu ra, giữ nguyên video gốc và mô hình.
 
-Hoặc cài thủ công:
+## Cấu trúc sau dọn dẹp
 
-```bash
-pip install ultralytics opencv-python pandas numpy scikit-learn streamlit pyyaml torch torchvision joblib
-```
+- `app.py`: giao diện; `main.py`: dòng lệnh.
+- `evaluate_vehicle_pairs.py`: bộ thu thập theo dõi và tạo ứng viên, được pipeline nhập trực tiếp nên cần giữ.
+- `core/`, `utils/`: phát hiện xe, theo dõi, xác minh sự cố, lưu trữ và xuất video.
+- `config.yaml`, `configs/`, `.streamlit/`: cấu hình.
+- `models/`: trọng số; `venv/`: môi trường Python đang dùng.
+- `dataset/`: dữ liệu gốc, nhãn và đặc trưng phục vụ huấn luyện tiếp.
+- `outputs/vehicle_pair_training/`, `outputs/vehicle_pair_preparation/`, `outputs/single_vehicle_training/`: mô hình và hồ sơ huấn luyện cần giữ.
+- `outputs/vehicle_pair_runtime/runtime_policy.json`: trọng số, ngưỡng và checksum mã đã kiểm tra.
+- `outputs/history.sqlite3`, `outputs/pair_demo/`: lịch sử và các kết quả người dùng đã lưu; sao lưu cùng nhau.
 
----
+Các script huấn luyện/đánh giá cũ, thư mục `tests`, các thử nghiệm và gói Kaggle đã được gom vào `D:\HTTM_archive\research_20261107_170018.zip`. Gói giữ đường dẫn tương đối và `ARCHIVE_MANIFEST.json` chứa SHA-256 từng tệp. Khi cần tiếp tục một thí nghiệm, giải nén các thành phần liên quan về đúng đường dẫn gốc; không giải nén đè toàn bộ lên phiên bản ứng dụng mới. Các script cũ thường kiểm tra checksum và đường dẫn gốc.
 
-## 🚀 Hướng Dẫn Sử Dụng
+## Nguyên lý và giới hạn
 
-### Chạy Giao Diện Web (Streamlit Dashboard)
+YOLOv8m + ByteTrack → xác minh cặp xe bằng đặc trưng hình học và hình ảnh; nếu chưa có sự kiện cặp xe, kiểm tra thêm nhánh sự cố một xe. Cảnh báo đỏ giữ từ mốc phát hiện đến cuối video; khung ID vẫn hiện khi NORMAL.
 
-```bash
-streamlit run app.py
-```
+Nhánh hình học một xe loại các cửa sổ nhảy ID và yêu cầu xe đã có chuyển động trước bất thường (trên 0,6 đường chéo khung xe/giây trên ảnh). Đoạn giảm tốc được kiểm tra thêm trên lưới thời gian lệch 0,2 giây; hai cửa sổ xoay mạnh phải cùng vượt ngưỡng RGB. Không thay đặc trưng đầu vào hoặc trọng số đã train.
 
-Trình duyệt sẽ mở tại `http://localhost:8501` với giao diện tải video và phân tích trực quan.
+Nếu một sự kiện giảm tốc được mô hình xác minh, hệ thống có thể quy về **nghi va chạm hai xe** khi có thêm quan sát hai ID tách nhau rồi tiến sát nhau và xe thứ hai đồng thời giảm chuyển động, đổi hướng. Nếu nhiều xe cùng thỏa điều kiện thì giữ kết quả một xe, không tự chọn đối tác. Đây là nhánh kết hợp bằng chứng chuyển động/tiếp xúc; không có nghĩa bộ phân loại cặp xe đã vượt ngưỡng. Mốc hiển thị là tiếp xúc khung ảnh ước lượng, sử dụng cả ngữ cảnh sau đó để xác minh trong chế độ xử lý video ngoại tuyến.
 
-### Chạy Bằng Dòng Lệnh (CLI)
+NORMAL có nghĩa **chưa phát hiện sự cố**, không bảo đảm video không có tai nạn. Mốc sự kiện là ước lượng, không phải toàn bộ khoảng đầu–cuối tai nạn. Chưa hỗ trợ sự cố xe máy/người đi bộ. Kết quả trên các video demo dùng trong phát triển không đại diện độ chính xác với video bất kỳ. Việc dọn thư mục không thay mô hình hoặc ngưỡng phát hiện.
 
-```bash
-# Chạy với cấu hình mặc định
-python main.py --config config.yaml
+## Nhãn đối tượng và duyệt kết quả
 
-# Chạy với video cụ thể
-python main.py --config config.yaml --input path/to/video.mp4
+- Video mới có nhãn `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `person`. ID A thuộc nhánh theo dõi bổ sung, tách khỏi ID xe trong nhánh sự cố. Việc bổ sung đối tượng không tự mở rộng phạm vi nhận diện tai nạn.
+- Kết quả có bảng thống kê theo loại đối tượng và xuất CSV. Số ID là số phiên theo dõi, không phải số phương tiện duy nhất ngoài đời; mất dấu có thể làm tăng số này.
+- Trong Lịch sử, xem lại video rồi dùng **Duyệt kết quả** để xác nhận, đánh dấu báo nhầm/bỏ sót hoặc ghi không rõ. Đánh giá người dùng lưu riêng với dự đoán AI; không tự sửa nhãn mô hình hoặc tự đưa vào training. Xóa lịch sử cũng xóa đánh giá tương ứng.
+- Nhánh đối tượng bổ sung dùng YOLOv8m/ByteTrack ở 640, confidence 0,25 trong giai đoạn xuất video nên làm tăng thời gian xử lý CPU. Nhánh sự cố gốc và các ngưỡng của nó giữ nguyên.
+- Tham khảo ý tưởng lớp đối tượng và tách cảnh báo AI khỏi xác nhận người dùng từ [Accident_Detect](https://github.com/K1ethoang/Accident_Detect) và [Surveillance-Camera-System](https://github.com/K1ethoang/Surveillance-Camera-System). Không tích hợp các dịch vụ camera/Kafka/cloud vì phiên bản này xử lý video trên máy.
 
-# Chạy không hiển thị cửa sổ (cho server)
-python main.py --config config.yaml --no-display
-```
+## Giải thích sự kiện
 
----
-
-## 📁 Cấu Trúc Dự Án
-
-```
-AcciVision/
-├── app.py                  # Giao diện web Streamlit Dashboard
-├── main.py                 # Pipeline xử lý chính & CLI
-├── config.yaml             # Tệp cấu hình hệ thống
-├── requirements.txt        # Danh sách thư viện phụ thuộc
-├── train_rf_baseline.py    # Script huấn luyện mô hình Random Forest
-├── core/                   # Các module xử lý lõi
-│   ├── detector.py         #   → Phát hiện phương tiện (YOLOv8)
-│   ├── tracker.py          #   → Theo dõi đa đối tượng (ByteTrack)
-│   ├── trajectory.py       #   → Quản lý quỹ đạo chuyển động
-│   ├── transformer.py      #   → Chuyển đổi phối cảnh (BEV)
-│   ├── features.py         #   → Trích xuất đặc trưng động học
-│   ├── classifier.py       #   → Phân loại tai nạn (Random Forest)
-│   └── event_detector.py   #   → Phát hiện & quản lý sự kiện
-├── utils/                  # Các hàm tiện ích
-│   ├── visualization.py    #   → Vẽ bounding box, trajectory, trạng thái
-│   ├── math_utils.py       #   → Hàm toán học (khoảng cách, góc, tốc độ)
-│   └── interpolation.py    #   → Nội suy quỹ đạo
-├── models/                 # Mô hình đã huấn luyện
-│   ├── yolov8n.pt          #   → Mô hình YOLOv8 Nano
-│   └── accident_rf_model.pkl #  → Mô hình Random Forest phân loại tai nạn
-├── dataset/                # Bộ dữ liệu huấn luyện & kiểm thử
-│   ├── input_video/        #   → Video đầu vào
-│   └── *.csv               #   → Các tệp đặc trưng (features)
-└── outputs/                # Kết quả đầu ra (video, CSV)
-```
-
----
-
-## ⚙️ Cấu Hình (config.yaml)
-
-Tệp `config.yaml` cho phép tùy chỉnh toàn bộ pipeline. Các thông số quan trọng:
-
-| Thông số | Mô tả | Giá trị mặc định |
-| :--- | :--- | :--- |
-| `yolo.confidence` | Ngưỡng tin cậy phát hiện YOLOv8 | 0.30 |
-| `classifier.threshold` | Ngưỡng xác suất phân loại tai nạn | 0.70 |
-| `perspective.enabled` | Bật/tắt chuyển đổi phối cảnh | true |
-| `features.temporal_window` | Số frame cửa sổ trượt thống kê | 8 |
-| `output.draw_trajectory` | Hiển thị quỹ đạo trên video | true |
-
----
-
-## 📊 Huấn Luyện Mô Hình
-
-### Huấn luyện trên tập dữ liệu tổng hợp (khuyến nghị)
-
-```bash
-python train_rf_baseline.py --csv dataset/combined_train_dataset.csv --output models/accident_rf_model.pkl
-```
-
-### Trích xuất đặc trưng từ video mới
-
-```bash
-python dataset/extract_dataset_from_videos.py --video-dir path/to/videos --label-accident --output dataset/new_features.csv
-```
-
----
-
-## 🔬 Công Nghệ Sử Dụng
-
-| Thành phần | Công nghệ |
-| :--- | :--- |
-| Phát hiện đối tượng | YOLOv8 (Ultralytics) |
-| Theo dõi đa đối tượng | ByteTrack |
-| Chuyển đổi phối cảnh | OpenCV Perspective Transform |
-| Trích xuất đặc trưng | Phân tích động học (Kinematic Analysis) |
-| Phân loại tai nạn | Random Forest (scikit-learn) |
-| Giao diện web | Streamlit |
-| Xử lý video | OpenCV |
-
----
-
-## 📝 Ghi Chú
-
-- **Track ID** là mã định danh phiên theo dõi (ByteTrack session ID), **không phải** biển số xe.
-- Hệ thống cần **calibration camera** (điều chỉnh `perspective.source_points` trong `config.yaml`) để tính toán khoảng cách/tốc độ chính xác theo mét thực tế.
-- Mô hình YOLOv8 Nano (`yolov8n.pt`) được chọn để tối ưu tốc độ xử lý. Có thể thay bằng `yolov8s.pt`, `yolov8m.pt` để tăng độ chính xác.
-
----
-
-## 📜 Giấy Phép
-
-Dự án phục vụ mục đích nghiên cứu và học thuật.
-
----
-
-> **AcciVision** — *Phát hiện tai nạn, bảo vệ an toàn giao thông.*
+Kết quả và CSV mô tả dấu hiệu quan sát được: nghi giảm chuyển động đột ngột, nghi xoay hướng mạnh, nghi thay đổi quỹ đạo, hoặc nghi va chạm giữa hai xe. Mô tả được tính từ đặc trưng của từng sự kiện, không dựa vào tên video hay nhãn tham chiếu. Khi thiếu đặc trưng, hệ thống ghi chưa rõ dạng sự cố. Các mô tả này không xác định nguyên nhân vật lý như hỏng phanh/nổ lốp, không xác nhận xe ra khỏi làn hay đâm vật cản và không xác định bên gây tai nạn. Bản ghi AI và ngưỡng nhận diện được giữ nguyên.

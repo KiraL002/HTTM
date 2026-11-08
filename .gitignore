@@ -9,11 +9,52 @@ venv/
 env/
 ENV/
 
-# Output files from test runs (videos, CSVs)
-outputs/
-dataset/output_features.csv
+# Local inputs, training caches and generated evidence
+*.zip
+*.npz
+*.csv
 *.mp4
 *.avi
+*.mov
+*.mkv
+*.sqlite3*
+/vehicle_box_labels.json
+/dataset/*
+!/dataset/*.py
+!/dataset/README.md
+
+# Current application weights and legacy CLI weights
+/models/*
+!/models/yolov8m.pt
+!/models/accident_rf_model.pkl
+!/models/visual_accident_classifier.pth
+
+# Only deployable models/configuration; histories and renders stay local
+/outputs/*
+!/outputs/vehicle_pair_runtime/
+/outputs/vehicle_pair_runtime/*
+!/outputs/vehicle_pair_runtime/runtime_policy.json
+!/outputs/vehicle_pair_runtime/smoke_plan.json
+!/outputs/vehicle_pair_runtime/smoke_evaluation.json
+!/outputs/vehicle_pair_training/
+/outputs/vehicle_pair_training/*
+!/outputs/vehicle_pair_training/accident_pair_verifier.pt
+!/outputs/vehicle_pair_training/validated/
+/outputs/vehicle_pair_training/validated/*
+!/outputs/vehicle_pair_training/validated/geometry/
+/outputs/vehicle_pair_training/validated/geometry/*
+!/outputs/vehicle_pair_training/validated/geometry/geometry_baseline.joblib
+!/outputs/single_vehicle_training/
+/outputs/single_vehicle_training/*
+!/outputs/single_vehicle_training/single_vehicle_head.joblib
+
+# Credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+**/secrets.toml
+*.pem
+*.key
 
 # IDE and OS files
 .vscode/

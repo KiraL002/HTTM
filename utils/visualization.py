@@ -20,44 +20,41 @@ def draw_detection(
     confidence: Optional[float] = None,
     track_id: Optional[int] = None,
     thickness: int = 2,
+    is_accident: bool = False,
 ) -> np.ndarray:
     """
     Vẽ bounding box + label + track ID.
+    Đổi sang màu đỏ nổi bật nếu phương tiện nằm trong diện cảnh báo tai nạn.
     """
 
-    x1, y1, x2, y2 = map(
-        int,
-        bbox,
-    )
+    x1, y1, x2, y2 = map(int, bbox)
+
+    color = (0, 0, 255) if is_accident else (0, 255, 0)
+    box_thickness = max(thickness, 3) if is_accident else thickness
 
     cv2.rectangle(
         frame,
         (x1, y1),
         (x2, y2),
-        (0, 255, 0),
-        thickness,
+        color,
+        box_thickness,
     )
 
     parts = []
 
     if track_id is not None:
-        parts.append(
-            f"ID:{track_id}"
-        )
+        parts.append(f"ID:{track_id}")
 
     parts.append(label)
 
     if confidence is not None:
-        parts.append(
-            f"{confidence:.2f}"
-        )
+        parts.append(f"{confidence:.2f}")
+
+    if is_accident:
+        parts.append("ALERT!")
 
     text = " | ".join(parts)
-
-    text_y = max(
-        y1 - 10,
-        20,
-    )
+    text_y = max(y1 - 10, 20)
 
     cv2.putText(
         frame,
@@ -65,7 +62,7 @@ def draw_detection(
         (x1, text_y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
-        (0, 255, 0),
+        color,
         2,
         cv2.LINE_AA,
     )
@@ -82,10 +79,7 @@ def draw_track_point(
     Vẽ bottom-center point.
     """
 
-    x, y = map(
-        int,
-        point,
-    )
+    x, y = map(int, point)
 
     cv2.circle(
         frame,
@@ -104,53 +98,29 @@ def draw_trajectory(
     thickness: int = 2,
 ) -> np.ndarray:
     """
-    Vẽ trajectory.
-
-    points:
-        shape (T, 2)
-
-    Có thể chứa NaN.
+    Vẽ trajectory trên tọa độ pixel.
     """
 
-    points = np.asarray(
-        points,
-        dtype=np.float64,
-    )
+    points = np.asarray(points, dtype=np.float64)
 
-    if points.ndim != 2:
-        raise ValueError(
-            "points must be 2D."
-        )
-
-    if points.shape[1] != 2:
-        raise ValueError(
-            "points must have shape (T, 2)."
-        )
+    if points.ndim != 2 or points.shape[1] != 2:
+        return frame
 
     previous = None
 
     for point in points:
-
-        if not np.all(
-            np.isfinite(point)
-        ):
+        if not np.all(np.isfinite(point)):
             previous = None
             continue
 
-        current = tuple(
-            map(
-                int,
-                point,
-            )
-        )
+        current = tuple(map(int, point))
 
         if previous is not None:
-
             cv2.line(
                 frame,
                 previous,
                 current,
-                (255, 0, 0),
+                (255, 140, 0),
                 thickness,
                 cv2.LINE_AA,
             )
@@ -169,22 +139,15 @@ def draw_speed(
     Vẽ tốc độ.
     """
 
-    x, y = map(
-        int,
-        position,
-    )
-
-    text = (
-        f"Speed: "
-        f"{speed_mps:.2f} m/s"
-    )
+    x, y = map(int, position)
+    text = f"Speed: {speed_mps:.2f} m/s"
 
     cv2.putText(
         frame,
         text,
         (x, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
+        0.5,
         (255, 255, 0),
         2,
         cv2.LINE_AA,
@@ -203,24 +166,17 @@ def draw_world_position(
     Hiển thị tọa độ thực tế trong BEV.
     """
 
-    x, y = map(
-        int,
-        position,
-    )
-
-    text = (
-        f"X={world_x:.2f}m "
-        f"Y={world_y:.2f}m"
-    )
+    x, y = map(int, position)
+    text = f"X={world_x:.1f}m Y={world_y:.1f}m"
 
     cv2.putText(
         frame,
         text,
         (x, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
+        0.48,
         (255, 255, 0),
-        2,
+        1,
         cv2.LINE_AA,
     )
 
@@ -231,9 +187,11 @@ def draw_status(
     frame: np.ndarray,
     status: str,
     probability: Optional[float] = None,
+    timestamp_s: Optional[float] = None,
+    frame_id: Optional[int] = None,
 ) -> np.ndarray:
     """
-    Vẽ trạng thái tổng thể.
+    Vẽ trạng thái tổng thể và thời gian của frame hiện tại.
     """
 
     is_accident = (
@@ -243,16 +201,17 @@ def draw_status(
     )
 
     if is_accident:
-        text = "CANH BAO: CO TAI NAN (ACCIDENT DETECTED)"
+        prob_str = f" ({probability * 100:.0f}%)" if probability else ""
+        text = f"CANH BAO: CO TAI NAN{prob_str}"
         color = (0, 0, 255)  # Đỏ
     else:
-        text = "TRANG THAI: AN TOAN (NORMAL)"
+        text = "CHUA PHAT HIEN SU CO (NORMAL)"
         color = (0, 255, 0)  # Xanh lá
 
     cv2.rectangle(
         frame,
-        (20, 20),
-        (620, 65),
+        (16, 16),
+        (560, 82),
         (0, 0, 0),
         -1,
     )
@@ -260,13 +219,26 @@ def draw_status(
     cv2.putText(
         frame,
         text,
-        (30, 50),
+        (26, 44),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.65,
         color,
         2,
         cv2.LINE_AA,
     )
+
+    if timestamp_s is not None and frame_id is not None:
+        time_text = f"Time: {timestamp_s:.1f}s | Frame: {frame_id}"
+        cv2.putText(
+            frame,
+            time_text,
+            (26, 72),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
     return frame
 
@@ -284,9 +256,9 @@ def draw_fps(
     cv2.putText(
         frame,
         text,
-        (20, 95),
+        (20, 110),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
+        0.55,
         (255, 255, 255),
         2,
         cv2.LINE_AA,

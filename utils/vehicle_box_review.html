@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duyệt khung xe · AcciVision</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:#f3f7fc;color:#153455}main{max-width:1480px;margin:auto;padding:24px}h1{font-size:26px;margin:0 0 10px}p{line-height:1.6}.card{background:white;border:1px solid #d7e3f1;border-radius:14px;padding:18px;margin:14px 0}.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}button,select{font:inherit;padding:10px 14px;border-radius:8px;border:1px solid #c6d7ea;background:white;color:#153455;cursor:pointer}button.primary{background:#155fbb;color:white;border-color:#155fbb}button:disabled{opacity:.4;cursor:default}.grid{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:16px}canvas{width:100%;display:block;touch-action:none;background:#10253e;cursor:crosshair}.muted{font-size:14px;color:#536e8e}.tag{background:#e6effc;padding:4px 10px;border-radius:20px}.boxlist{max-height:430px;overflow:auto}.boxlist button{display:block;width:100%;text-align:left;margin:6px 0}.selected{outline:3px solid #ed9514}.status{font-weight:650}a{color:#155fbb}#message{color:#ad263d}.tiny{font-size:13px}@media(max-width:850px){.grid{grid-template-columns:1fr}main{padding:12px}}
+</style><main>
+<h1>Duyệt khung xe thật</h1>
+<p>Khung xanh là <b>gợi ý chưa được xác nhận</b>. Hãy sửa và bổ sung <b>mọi ô tô, xe tải, xe buýt nhìn thấy</b>, kể cả xe không liên quan va chạm. Không khoanh cả vùng tai nạn thành một xe. Xe quá mờ hoặc bị che đến mức không xác định được khung: chọn <b>Loại ảnh khó xác định</b>.</p>
+<div class="card row"><span id="progress"></span><button id="download" class="primary">Tải nhãn đã duyệt (.json)</button><label>Khôi phục bản đã tải: <input id="restore" type="file" accept=".json" style="max-width:220px"></label></div>
+<div class="card"><div class="row"><button id="prev">← Ảnh trước</button><select id="frameSelect" aria-label="Chọn ảnh"></select><button id="next">Ảnh sau →</button><span id="status" class="status"></span></div><p id="source" class="muted"></p>
+<div class="row"><label>Loại xe khi vẽ: <select id="newClass"><option value="2">Ô tô</option><option value="7">Xe tải</option><option value="5">Xe buýt</option></select></label><span class="muted">Kéo chuột trên ảnh để thêm khung. Bấm một khung trong danh sách để sửa loại hoặc xóa.</span></div>
+<div class="grid" style="margin-top:14px"><div><canvas id="canvas"></canvas><p class="muted">Khung cần ôm sát xe nhìn thấy. Xe máy/người đi bộ chưa nằm trong phạm vi đợt nhãn này.</p></div><aside><div id="boxlist" class="boxlist"></div><div class="row"><select id="selectedClass" aria-label="Sửa loại xe"><option value="2">Ô tô</option><option value="7">Xe tải</option><option value="5">Xe buýt</option></select><button id="delete">Xóa khung</button></div><button id="clear" style="margin-top:12px">Xóa tất cả khung ảnh này</button><p class="tiny">Nếu ảnh thật sự không có xe thuộc ba loại trên, có thể xác nhận với 0 khung. Không dùng cách này cho ảnh có xe nhưng không nhìn rõ.</p></aside></div>
+<div class="row"><button id="approve" class="primary">Xác nhận đã gán đủ và đúng xe</button><button id="exclude">Loại ảnh khó xác định</button><button id="undo">Hoàn tác thay đổi cuối</button></div><p id="message"></p></div>
+<p class="muted">Thao tác được lưu trên trình duyệt này nếu trình duyệt cho phép. Hãy tải JSON để giữ bản chắc chắn. Trang này không huấn luyện và không đổi mô hình ứng dụng.</p>
+<script>
+const DATA=/*REVIEW_DATA*/null;
+const frames=DATA.manifest.frames, names={'2':'Ô tô','5':'Xe buýt','7':'Xe tải'}, storageKey='accivision-vehicle-boxes-'+DATA.manifest_sha256;
+const clone=x=>JSON.parse(JSON.stringify(x));
+let states=Object.fromEntries(frames.map(f=>[f.id,{decision:'pending',boxes:clone(f.boxes)}]));
+let persistence=true;
+try{const saved=JSON.parse(localStorage.getItem(storageKey));if(saved)for(const f of frames)if(saved[f.id])states[f.id]=saved[f.id]}catch(e){persistence=false}
+let index=0,selected=-1,drag=null,image=new Image(),loading=true,undo=[];
+const $=id=>document.getElementById(id), canvas=$('canvas'), ctx=canvas.getContext('2d');
+function f(){return frames[index]}function state(){return states[f().id]}
+function persist(){try{localStorage.setItem(storageKey,JSON.stringify(states))}catch(e){persistence=false}$('message').textContent=persistence?'':'Trình duyệt chưa lưu tự động. Hãy tải JSON sau mỗi đợt duyệt.'}
+function update(){const done=frames.filter(x=>states[x.id].decision!=='pending').length;$('progress').textContent=`Đã duyệt ${done}/${frames.length} ảnh`;
+ $('status').textContent={pending:'Chưa duyệt',approved:'Đã xác nhận',excluded:'Đã loại'}[state().decision]||'Chưa duyệt';
+ $('frameSelect').innerHTML='';frames.forEach((x,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${i+1}/${frames.length} · ${states[x.id].decision==='approved'?'✓':states[x.id].decision==='excluded'?'×':'○'} · ${x.night?'Đêm':'Ngày'} · ${x.split}`;$('frameSelect').append(o)});$('frameSelect').value=index;
+ $('prev').disabled=index===0;$('next').disabled=index===frames.length-1;
+ $('source').textContent=`${f().source} · Khung ${f().frame_index} (đánh số từ 0) · ${f().width} × ${f().height}`;
+ $('boxlist').innerHTML='';state().boxes.forEach((b,i)=>{const btn=document.createElement('button');btn.textContent=`Khung ${i+1} · ${names[b.class_id]||'Chưa rõ'}`;btn.className=selected===i?'selected':'';btn.onclick=()=>{selected=i;update();draw()};$('boxlist').append(btn)});
+ $('delete').disabled=selected<0;$('selectedClass').disabled=selected<0;if(selected>=0)$('selectedClass').value=state().boxes[selected].class_id;
+}
+function draw(){if(loading)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0);state().boxes.forEach((b,i)=>{const [x1,y1,x2,y2]=b.xyxy;ctx.strokeStyle=i===selected?'#ffa81c':'#20a9ff';ctx.lineWidth=Math.max(2,canvas.width/500);ctx.strokeRect(x1,y1,x2-x1,y2-y1);ctx.font=`${Math.max(16,canvas.width/60)}px sans-serif`;ctx.fillStyle=ctx.strokeStyle;ctx.fillText(`${i+1}: ${names[b.class_id]}`,x1,Math.max(20,y1-5))});if(drag){ctx.strokeStyle='#ffa81c';ctx.strokeRect(drag.x,drag.y,drag.ex-drag.x,drag.ey-drag.y)}}
+function load(){loading=true;selected=-1;drag=null;undo=[];canvas.width=f().width;canvas.height=f().height;ctx.clearRect(0,0,canvas.width,canvas.height);const id=f().id;const nextImage=new Image();nextImage.onload=()=>{if(f().id!==id)return;image=nextImage;loading=false;draw()};nextImage.onerror=()=>{$('message').textContent='Không đọc được ảnh. Giữ index.html và thư mục images cạnh nhau.'};nextImage.src=f().image;update()}
+function edit(){undo.push(clone(state()));if(undo.length>30)undo.shift();state().decision='pending'}
+function point(e){const r=canvas.getBoundingClientRect();return {x:Math.max(0,Math.min(canvas.width,(e.clientX-r.left)*canvas.width/r.width)),y:Math.max(0,Math.min(canvas.height,(e.clientY-r.top)*canvas.height/r.height))}}
+canvas.onpointerdown=e=>{if(loading)return;const p=point(e);drag={...p,ex:p.x,ey:p.y};canvas.setPointerCapture(e.pointerId)};
+canvas.onpointermove=e=>{if(!drag)return;const p=point(e);drag.ex=p.x;drag.ey=p.y;draw()};
+canvas.onpointerup=e=>{if(!drag)return;const p=point(e);const b=[Math.min(drag.x,p.x),Math.min(drag.y,p.y),Math.max(drag.x,p.x),Math.max(drag.y,p.y)].map(x=>Math.round(x*100)/100);drag=null;if(b[2]-b[0]>=3&&b[3]-b[1]>=3){edit();state().boxes.push({class_id:Number($('newClass').value),xyxy:b,origin:'reviewer_drawn'});selected=state().boxes.length-1;persist();update()}draw()};
+canvas.onpointercancel=()=>{drag=null;draw()};
+$('selectedClass').onchange=()=>{if(selected<0)return;edit();state().boxes[selected].class_id=Number($('selectedClass').value);persist();update();draw()};
+$('delete').onclick=()=>{if(selected<0)return;edit();state().boxes.splice(selected,1);selected=-1;persist();update();draw()};
+$('clear').onclick=()=>{edit();state().boxes=[];selected=-1;persist();update();draw()};
+$('undo').onclick=()=>{if(!undo.length)return;states[f().id]=undo.pop();selected=-1;persist();update();draw()};
+$('approve').onclick=()=>{if(loading)return;state().decision='approved';persist();update()};$('exclude').onclick=()=>{state().decision='excluded';persist();update()};
+$('prev').onclick=()=>{if(index>0){index--;load()}};$('next').onclick=()=>{if(index<frames.length-1){index++;load()}};$('frameSelect').onchange=()=>{index=Number($('frameSelect').value);load()};
+$('download').onclick=()=>{const output={schema:1,review_type:'explicit_per_frame_vehicle_boxes',manifest_sha256:DATA.manifest_sha256,exported_at:new Date().toISOString(),frames:frames.map(x=>({id:x.id,decision:states[x.id].decision,human_verified:states[x.id].decision==='approved',boxes:states[x.id].boxes}))};const url=URL.createObjectURL(new Blob([JSON.stringify(output,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='vehicle_box_labels.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+$('restore').onchange=async e=>{try{const data=JSON.parse(await e.target.files[0].text());if(data.manifest_sha256!==DATA.manifest_sha256||data.review_type!=='explicit_per_frame_vehicle_boxes')throw Error('Sai bộ ảnh');const ids=new Set(frames.map(x=>x.id));if(data.frames.length!==frames.length||new Set(data.frames.map(x=>x.id)).size!==frames.length)throw Error('Thiếu hoặc trùng ảnh');for(const row of data.frames){if(!ids.has(row.id)||!['pending','approved','excluded'].includes(row.decision)||!Array.isArray(row.boxes))throw Error('Nhãn không hợp lệ');const frame=frames.find(x=>x.id===row.id);for(const b of row.boxes){if(![2,5,7].includes(b.class_id)||!Array.isArray(b.xyxy)||b.xyxy.length!==4||!b.xyxy.every(Number.isFinite))throw Error('Khung không hợp lệ');const [a,c,d,h]=b.xyxy;if(!(a>=0&&c>=0&&d>a&&h>c&&d<=frame.width&&h<=frame.height))throw Error('Khung vượt ảnh')}}for(const row of data.frames)states[row.id]={decision:row.decision,boxes:clone(row.boxes)};persist();load()}catch(error){$('message').textContent='Không khôi phục được: '+error.message}};
+load();
+</script></main></html>

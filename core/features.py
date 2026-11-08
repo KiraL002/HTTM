@@ -1,9 +1,8 @@
 """
 AcciVision — Module Trích Xuất Đặc Trưng Động Học (Kinematic Feature Extractor)
 
-Module này trích xuất các đặc trưng vật lý từ quỹ đạo chuyển động
-của phương tiện: tốc độ, gia tốc, hướng di chuyển, tương tác giữa
-các phương tiện, và các chỉ số cảnh báo tai nạn đơn xe/đa xe.
+Đặc trưng được tính từ vị trí đã quy đổi ở bước trước.
+Độ chính xác vật lý phụ thuộc vào việc hiệu chỉnh camera/phép biến đổi phối cảnh.
 """
 
 from __future__ import annotations
@@ -17,21 +16,6 @@ import numpy as np
 
 @dataclass
 class FeatureVector:
-    """
-    Tập đặc trưng động học và tương tác của phương tiện tại một frame.
-
-    Semantics rõ ràng:
-    - ``acceleration_mps2``: Gia tốc dọc có dấu (m/s²). Dương là tăng tốc, âm là giảm tốc.
-    - ``deceleration_mps2``: Độ lớn giảm tốc / phanh (m/s²), luôn >= 0. deceleration = max(0, -acceleration).
-    - ``speed_delta_mps``: Độ thay đổi tốc độ (v_t - v_{t-1}).
-    - ``nearest_distance_m``: Khoảng cách tới xe gần nhất, giới hạn trần 50.0m để tránh bias dữ liệu.
-    - ``has_neighbor``: 1 nếu có xe lân cận trong phạm vi tương tác (<= 25m), 0 nếu là xe đơn độc.
-    - ``closing_speed_mps``: Tốc độ tiếp cận xe phía trước/gần nhất (m/s).
-    - Single-vehicle features: ``yaw_rate_dps``, ``lateral_acceleration_mps2``, ``jerk_mps3``,
-      ``sudden_stop``, ``trajectory_change``, ``speed_drop_window_mps``, ``stopped_after_motion``.
-    - Temporal features: Thống kê thực tế trong cửa sổ trượt (window).
-    """
-
     track_id: int
     object_type: str
     x_m: float
@@ -68,8 +52,7 @@ class FeatureVector:
 
 class FeatureExtractor:
     """
-    Trích xuất đặc trưng động học cho phương tiện, hỗ trợ cả tai nạn đơn xe (single-vehicle)
-    và tai nạn va chạm nhiều xe (multi-vehicle interaction).
+    Trích xuất đặc trưng động học từ vị trí track đã được quy đổi.
     """
 
     def __init__(
@@ -79,7 +62,7 @@ class FeatureExtractor:
         direction_change_threshold: float = 35.0,
         temporal_window: int = 15,
         max_interaction_distance: float = 50.0,
-        velocity_smoothing_alpha: float = 0.30,
+        velocity_smoothing_alpha: float = 0.35,
     ) -> None:
         if fps <= 0:
             raise ValueError("fps must be > 0")
@@ -88,40 +71,93 @@ class FeatureExtractor:
         self.dt = 1.0 / self.fps
         self.sudden_stop_deceleration = float(sudden_stop_deceleration)
         self.direction_change_threshold = float(direction_change_threshold)
-        self.temporal_window = int(max(3, temporal_window))
+        self.temporal_window = int(max(10, temporal_window))
         self.max_interaction_distance = float(max_interaction_distance)
         self.velocity_smoothing_alpha = float(velocity_smoothing_alpha)
+        self.position_smoothing_alpha = 0.50
 
-        # Lịch sử chuỗi thời gian cho từng track
+        self._pos_history = defaultdict(lambda: deque(maxlen=12))
+        self._pixel_history = defaultdict(lambda: deque(maxlen=12))
+        self._bbox_history = defaultdict(lambda: deque(maxlen=15))
+        self._smoothed_positions: Dict[int, np.ndarray] = {}
         self._speed_history = defaultdict(lambda: deque(maxlen=self.temporal_window))
         self._accel_history = defaultdict(lambda: deque(maxlen=self.temporal_window))
         self._dir_change_history = defaultdict(lambda: deque(maxlen=self.temporal_window))
+        self._time_history = defaultdict(lambda: deque(maxlen=self.temporal_window))
         self._smoothed_velocities = defaultdict(lambda: np.zeros(2, dtype=np.float32))
         self._previous_accel = defaultdict(float)
         self._track_age = defaultdict(int)
+        self._last_frame_id: Dict[int, int] = {}
 
     def get_smoothed_velocity(self, track_id: int) -> np.ndarray:
-        """Lấy vận tốc đã làm mịn của track_id."""
         if track_id in self._smoothed_velocities:
             return self._smoothed_velocities[track_id].copy()
         return np.zeros(2, dtype=np.float32)
+
+    def _smooth_position(self, track_id: int, raw_position: np.ndarray) -> np.ndarray:
+        raw_pos = np.asarray(raw_position, dtype=np.float32)
+        if track_id not in self._smoothed_positions:
+            self._smoothed_positions[track_id] = raw_pos.copy()
+            return raw_pos
+
+        prev_pos = self._smoothed_positions[track_id]
+        smoothed = (
+            self.position_smoothing_alpha * raw_pos
+            + (1.0 - self.position_smoothing_alpha) * prev_pos
+        )
+        self._smoothed_positions[track_id] = smoothed
+        return smoothed
+
+    def _is_jittering_stationary(
+        self,
+        track_id: int,
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+    ) -> bool:
+        """Suppress small oscillations while preserving consistent slow motion."""
+        px_hist = self._pixel_history[track_id]
+        if len(px_hist) >= 5 and bbox is not None:
+            w = max(12.0, float(bbox[2] - bbox[0]))
+            h = max(12.0, float(bbox[3] - bbox[1]))
+            box_scale = 0.5 * (w + h)
+            positions = np.asarray(px_hist)
+            jitter_radius = 0.16 * box_scale
+        else:
+            pos_hist = self._pos_history[track_id]
+            if len(pos_hist) < 5:
+                return False
+            positions = np.asarray(pos_hist)
+            jitter_radius = 0.30
+
+        steps = np.diff(positions, axis=0)
+        path_length = float(np.linalg.norm(steps, axis=1).sum())
+        if path_length <= 1e-6:
+            return True
+        net_disp = float(np.linalg.norm(positions[-1] - positions[0]))
+        extent = float(np.linalg.norm(positions - positions[0], axis=1).max())
+        # Net displacement alone also labels a slowly approaching vehicle as
+        # parked. Consistent motion has net/path near one, regardless of scale.
+        coherence = net_disp / path_length
+        return extent < jitter_radius and coherence < 0.5
 
     def calculate_velocity(
         self,
         previous_position: np.ndarray,
         current_position: np.ndarray,
         track_id: Optional[int] = None,
+        elapsed_seconds: Optional[float] = None,
     ) -> np.ndarray:
-        """
-        Tính velocity (vx, vy) từ 2 vị trí và áp dụng EMA filter nhẹ
-        để triệt tiêu nhiễu rung bounding box giữa 2 frame liên tiếp.
-        """
-        raw_velocity = (np.asarray(current_position, dtype=np.float32) - np.asarray(previous_position, dtype=np.float32)) / self.dt
+        effective_dt = self.dt if elapsed_seconds is None else max(1e-6, float(elapsed_seconds))
+        raw_velocity = (
+            np.asarray(current_position, dtype=np.float32)
+            - np.asarray(previous_position, dtype=np.float32)
+        ) / effective_dt
 
         if track_id is not None and track_id in self._smoothed_velocities:
             prev_v = self._smoothed_velocities[track_id]
-            # EMA smoothing
-            smoothed_v = self.velocity_smoothing_alpha * raw_velocity + (1.0 - self.velocity_smoothing_alpha) * prev_v
+            smoothed_v = (
+                self.velocity_smoothing_alpha * raw_velocity
+                + (1.0 - self.velocity_smoothing_alpha) * prev_v
+            )
             self._smoothed_velocities[track_id] = smoothed_v
             return smoothed_v
 
@@ -137,8 +173,13 @@ class FeatureExtractor:
         self,
         previous_velocity: np.ndarray,
         current_velocity: np.ndarray,
+        elapsed_seconds: Optional[float] = None,
     ) -> np.ndarray:
-        return (np.asarray(current_velocity, dtype=np.float32) - np.asarray(previous_velocity, dtype=np.float32)) / self.dt
+        effective_dt = self.dt if elapsed_seconds is None else max(1e-6, float(elapsed_seconds))
+        return (
+            np.asarray(current_velocity, dtype=np.float32)
+            - np.asarray(previous_velocity, dtype=np.float32)
+        ) / effective_dt
 
     def calculate_direction(self, velocity: np.ndarray) -> float:
         if np.linalg.norm(velocity) < 1e-4:
@@ -157,7 +198,12 @@ class FeatureExtractor:
         position_a: np.ndarray,
         position_b: np.ndarray,
     ) -> float:
-        return float(np.linalg.norm(np.asarray(position_a, dtype=np.float32) - np.asarray(position_b, dtype=np.float32)))
+        return float(
+            np.linalg.norm(
+                np.asarray(position_a, dtype=np.float32)
+                - np.asarray(position_b, dtype=np.float32)
+            )
+        )
 
     def calculate_vehicle_interaction(
         self,
@@ -167,15 +213,6 @@ class FeatureExtractor:
         all_vehicle_positions: Dict[int, np.ndarray],
         all_vehicle_velocities: Optional[Dict[int, np.ndarray]] = None,
     ) -> Tuple[float, int, int, int, float]:
-        """
-        Chỉ tính tương tác giữa CÁC PHƯƠNG TIỆN (vehicles only).
-        Trả về:
-            - nearest_distance_m: khoảng cách tới xe gần nhất (giới hạn trần max_interaction_distance)
-            - neighbor_count: tổng số xe khác trong frame
-            - has_neighbor: 1 nếu có xe lân cận <= 25m, 0 nếu không có
-            - nearest_distance_valid: 1 nếu có ít nhất 1 xe khác
-            - closing_speed_mps: tốc độ tiếp cận xe gần nhất
-        """
         distances: List[Tuple[float, int]] = []
         curr_pos = np.asarray(current_position, dtype=np.float32)
 
@@ -188,14 +225,7 @@ class FeatureExtractor:
                 distances.append((dist, track_id))
 
         if not distances:
-            # Single vehicle scenario: không có xe nào khác trong frame
-            return (
-                self.max_interaction_distance,  # 50m neutral sentinel, tránh cực đoan 1000m
-                0,                              # neighbor_count
-                0,                              # has_neighbor
-                0,                              # nearest_distance_valid
-                0.0,                            # closing_speed_mps
-            )
+            return (self.max_interaction_distance, 0, 0, 0, 0.0)
 
         distances.sort(key=lambda x: x[0])
         min_dist, nearest_tid = distances[0]
@@ -203,7 +233,6 @@ class FeatureExtractor:
         has_neighbor = 1 if min_dist <= 25.0 else 0
         valid = 1
 
-        # Tính closing speed (tốc độ tiếp cận) với xe gần nhất
         closing_speed = 0.0
         if all_vehicle_velocities is not None and nearest_tid in all_vehicle_velocities:
             nearest_pos = np.asarray(all_vehicle_positions[nearest_tid], dtype=np.float32)
@@ -213,10 +242,56 @@ class FeatureExtractor:
             pos_norm = np.linalg.norm(rel_pos)
             if pos_norm > 1e-3:
                 rel_vel = current_velocity - nearest_vel
-                # Chiếu vận tốc tương đối lên hướng vector vị trí
                 closing_speed = float(np.dot(rel_vel, rel_pos) / pos_norm)
 
         return (capped_dist, len(distances), has_neighbor, valid, closing_speed)
+
+    def extract_frame(
+        self,
+        track_inputs: List[dict],
+        frame_id: Optional[int] = None,
+    ) -> Dict[int, FeatureVector]:
+        """Extract kinematics, then interactions using one current-frame snapshot.
+
+        Each input contains the per-track arguments accepted by ``extract``;
+        omit ``all_vehicle_positions`` and ``all_vehicle_velocities``. Previous
+        states must all come from the preceding observation of each track.
+        """
+        features: Dict[int, FeatureVector] = {}
+        for track_input in track_inputs:
+            track_id = int(track_input["track_id"])
+            if track_id in features:
+                raise ValueError(f"Duplicate track_id in frame: {track_id}")
+            features[track_id] = self.extract(
+                **track_input,
+                all_vehicle_positions={},
+                frame_id=frame_id,
+            )
+
+        positions = {
+            track_id: np.asarray([feature.x_m, feature.y_m], dtype=np.float32)
+            for track_id, feature in features.items()
+        }
+        velocities = {
+            track_id: self.get_smoothed_velocity(track_id)
+            for track_id in features
+        }
+        for track_id, feature in features.items():
+            (
+                feature.nearest_distance_m,
+                feature.neighbor_count,
+                feature.has_neighbor,
+                feature.nearest_distance_valid,
+                feature.closing_speed_mps,
+            ) = self.calculate_vehicle_interaction(
+                current_track_id=track_id,
+                current_position=positions[track_id],
+                current_velocity=velocities[track_id],
+                all_vehicle_positions=positions,
+                all_vehicle_velocities=velocities,
+            )
+            feature.interaction_count = feature.neighbor_count
+        return features
 
     def extract(
         self,
@@ -229,40 +304,80 @@ class FeatureExtractor:
         all_vehicle_positions: Dict[int, np.ndarray],
         all_vehicle_velocities: Optional[Dict[int, np.ndarray]] = None,
         object_type: str = "vehicle",
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+        frame_id: Optional[int] = None,
     ) -> FeatureVector:
         """
-        Trích xuất đầy đủ vector đặc trưng cho một phương tiện.
+        Trích xuất vector đặc trưng cho phương tiện theo từng track và thời gian thực.
         """
-        current_position = np.asarray(current_position, dtype=np.float32)
+        # The same track may disappear for several frames during occlusion.
+        # Account for elapsed time instead of treating the gap as one frame.
+        frames_elapsed = 1
+        if frame_id is not None:
+            last_id = self._last_frame_id.get(track_id)
+            if last_id is not None:
+                frames_elapsed = max(1, int(frame_id) - last_id)
+            if frames_elapsed > 15:
+                self.reset_track(track_id)
+                previous_position = None
+                previous_velocity = None
+                previous_direction = None
+                previous_speed = 0.0
+                frames_elapsed = 1
+            self._last_frame_id[track_id] = int(frame_id)
+        elapsed_seconds = frames_elapsed * self.dt
+
+        if bbox is not None:
+            bx = 0.5 * (bbox[0] + bbox[2])
+            by = bbox[3]
+            self._pixel_history[track_id].append(np.array([bx, by], dtype=np.float32))
+            self._bbox_history[track_id].append(bbox)
+
+        prev_smoothed_pos = self._smoothed_positions.get(track_id)
+        smoothed_pos = self._smooth_position(track_id, current_position)
+        self._pos_history[track_id].append(smoothed_pos.copy())
+
         self._track_age[track_id] += 1
         age = self._track_age[track_id]
 
-        # 1. Tính vận tốc & tốc độ
-        if previous_position is None:
+        if prev_smoothed_pos is None or previous_position is None:
             velocity = np.zeros(2, dtype=np.float32)
         else:
-            velocity = self.calculate_velocity(previous_position, current_position, track_id=track_id)
+            velocity = self.calculate_velocity(
+                prev_smoothed_pos, smoothed_pos,
+                track_id=track_id, elapsed_seconds=elapsed_seconds
+            )
+
+        # Do not boost speed using bbox size: it makes train/inference
+        # feature distributions inconsistent and amplifies tracking jitter.
+        # Position calibration belongs in the camera homography upstream.
+
+        is_stationary_jitter = self._is_jittering_stationary(track_id, bbox=bbox)
+        if is_stationary_jitter:
+            velocity = np.zeros(2, dtype=np.float32)
+            self._smoothed_velocities[track_id] = velocity.copy()
 
         speed = self.calculate_speed(velocity)
-        # Khóa hướng khi xe đi quá chậm (< 1.8 m/s ~ 6.5 km/h) hoặc dừng
-        # để triệt tiêu nhiễu pixel làm lật góc 180 độ gây hiểu nhầm xe bị xoay/lật
-        if speed >= 1.8:
+
+        if speed >= 1.5 and not is_stationary_jitter:
             direction = self.calculate_direction(velocity)
         else:
             direction = float(previous_direction) if previous_direction is not None else 0.0
 
-        # 2. Gia tốc dọc & giảm tốc (semantics thống nhất)
-        # Bắt buộc qua giai đoạn warm-up (age >= 3) để tránh cú nhảy gia tốc ảo
-        # khi xe mới lọt vào camera từ vận tốc [0, 0] lên vận tốc chạy thực tế
+        # 2. Gia tốc dọc & giảm tốc
         if age < 3 or previous_velocity is None or np.all(previous_velocity == 0):
-            acceleration_vector = np.zeros(2, dtype=np.float32)
+            acceleration = 0.0
+            deceleration = 0.0
+            speed_delta = 0.0
+        elif is_stationary_jitter and previous_speed < 1.8:
             acceleration = 0.0
             deceleration = 0.0
             speed_delta = 0.0
         else:
-            acceleration_vector = self.calculate_acceleration(previous_velocity, velocity)
+            acceleration_vector = self.calculate_acceleration(
+                previous_velocity, velocity, elapsed_seconds=elapsed_seconds
+            )
             if speed > 1e-4:
-                # Chiếu vector gia tốc lên vector hướng chuyển động
                 direction_unit = velocity / speed
                 acceleration = float(np.dot(acceleration_vector, direction_unit))
             else:
@@ -270,30 +385,29 @@ class FeatureExtractor:
                 if speed < previous_speed:
                     acceleration = -acceleration
 
-            # Giới hạn vật lý thực tế: xe giao thông không thể gia tốc/giảm tốc vượt quá 15 m/s² (~1.5g)
             acceleration = float(np.clip(acceleration, -18.0, 15.0))
             deceleration = float(np.clip(max(0.0, -acceleration), 0.0, 18.0))
             speed_delta = float(np.clip(speed - previous_speed, -25.0, 25.0))
 
-        # 3. Hướng & Tốc độ quay (Single-vehicle dynamics)
+        # 3. Hướng & Tốc độ quay
         prev_a = self._previous_accel[track_id]
-        if age < 3 or previous_direction is None or speed < 1.8:
+        if age < 3 or previous_direction is None or speed < 1.5 or is_stationary_jitter:
             direction_change = 0.0
             yaw_rate = 0.0
             lateral_accel = 0.0
-            jerk = 0.0 if age < 3 else float(np.clip((acceleration - prev_a) / self.dt, -60.0, 60.0))
+            jerk = 0.0
         else:
             direction_change = self.calculate_direction_change(previous_direction, direction)
             direction_change = float(np.clip(direction_change, 0.0, 180.0))
-            yaw_rate = float(np.clip(direction_change / self.dt, 0.0, 180.0))  # deg/s
+            yaw_rate = float(np.clip(direction_change / elapsed_seconds, 0.0, 180.0))
 
             yaw_rate_rad = np.radians(yaw_rate)
             lateral_accel = float(np.clip(speed * yaw_rate_rad, 0.0, 30.0))
-            jerk = float(np.clip((acceleration - prev_a) / self.dt, -60.0, 60.0))
+            jerk = float(np.clip((acceleration - prev_a) / elapsed_seconds, -60.0, 60.0))
 
         self._previous_accel[track_id] = acceleration
 
-        # 4. Chỉ tính tương tác xe với xe (Vehicle interaction only)
+        # 4. Tương tác giữa các phương tiện
         (
             nearest_dist,
             neighbor_cnt,
@@ -302,22 +416,26 @@ class FeatureExtractor:
             closing_spd,
         ) = self.calculate_vehicle_interaction(
             current_track_id=track_id,
-            current_position=current_position,
+            current_position=smoothed_pos,
             current_velocity=velocity,
             all_vehicle_positions=all_vehicle_positions,
             all_vehicle_velocities=all_vehicle_velocities,
         )
 
-        # 5. Cập nhật chuỗi thời gian thực sự (Temporal sliding window)
+        if is_stationary_jitter and speed < 0.5:
+            closing_spd = 0.0
+
+        # 5. Cập nhật chuỗi thời gian (Temporal sliding window)
         speeds = self._speed_history[track_id]
         accels = self._accel_history[track_id]
         dir_changes = self._dir_change_history[track_id]
+        times = self._time_history[track_id]
 
+        times.append((times[-1] if times else 0.0) + elapsed_seconds)
         speeds.append(speed)
         accels.append(acceleration)
         dir_changes.append(direction_change)
 
-        # Temporal features
         max_speed_window = float(max(speeds)) if speeds else speed
         speed_drop_window = float(max_speed_window - speed)
         dir_change_max = float(max(dir_changes)) if dir_changes else direction_change
@@ -327,18 +445,41 @@ class FeatureExtractor:
         speed_std = float(np.std(speeds)) if len(speeds) > 1 else 0.0
         accel_std = float(np.std(accels)) if len(accels) > 1 else 0.0
 
-        # stopped_after_motion: xe từng chuyển động (> 3.5 m/s) và giờ phanh dừng hẳn (< 1.0 m/s)
-        stopped_after_motion = 1 if (max_speed_window >= 3.5 and speed < 1.0 and deceleration >= 2.0) else 0
+        # Nếu có giảm tốc mạnh trong cửa sổ thời gian (ví dụ Xe #12 đâm vào dải phân cách rồi khựng lại)
+        if len(speeds) >= 4 and speed_drop_window >= 3.0:
+            window_seconds = times[-1] - times[0] + self.dt
+            effective_window_decel = speed_drop_window / window_seconds
+            deceleration = max(deceleration, float(np.clip(effective_window_decel * 1.5, 0.0, 18.0)))
 
-        # Cờ tai nạn đơn xe sơ bộ (chỉ kích hoạt khi xe thực sự đang chuyển động, không do nhiễu pixel khi đi chậm)
-        sudden_stop_flag = 1 if (deceleration >= self.sudden_stop_deceleration and max_speed_window >= 4.5 and speed_drop_window >= 3.0) else 0
-        trajectory_change_flag = 1 if (direction_change >= self.direction_change_threshold and speed >= 2.5) else 0
+        stopped_after_motion = (
+            1
+            if (max_speed_window >= 3.2 and (speed < 1.5 or speed <= 0.35 * max_speed_window) and speed_drop_window >= 2.5)
+            else 0
+        )
+
+        sudden_stop_flag = (
+            1
+            if (
+                (deceleration >= self.sudden_stop_deceleration or speed_drop_window >= 3.5)
+                and max_speed_window >= 3.5
+            )
+            else 0
+        )
+        trajectory_change_flag = (
+            1
+            if (
+                (direction_change >= 28.0 or dir_change_sum >= 55.0)
+                and max_speed_window >= 2.8
+                and not is_stationary_jitter
+            )
+            else 0
+        )
 
         return FeatureVector(
             track_id=track_id,
             object_type=object_type,
-            x_m=float(current_position[0]),
-            y_m=float(current_position[1]),
+            x_m=float(smoothed_pos[0]),
+            y_m=float(smoothed_pos[1]),
             speed_mps=float(speed),
             acceleration_mps2=float(acceleration),
             deceleration_mps2=float(deceleration),
@@ -367,10 +508,19 @@ class FeatureExtractor:
         )
 
     def reset_track(self, track_id: int) -> None:
-        """Xóa cache khi một track kết thúc."""
+        self._pos_history.pop(track_id, None)
+        self._pixel_history.pop(track_id, None)
+        self._bbox_history.pop(track_id, None)
+        self._smoothed_positions.pop(track_id, None)
         self._speed_history.pop(track_id, None)
         self._accel_history.pop(track_id, None)
         self._dir_change_history.pop(track_id, None)
+        self._time_history.pop(track_id, None)
         self._smoothed_velocities.pop(track_id, None)
         self._previous_accel.pop(track_id, None)
         self._track_age.pop(track_id, None)
+        self._last_frame_id.pop(track_id, None)
+    def reset(self) -> None:
+        """Reset all temporal state at the start of a new input video."""
+        for tid in list(self._track_age):
+            self.reset_track(tid)

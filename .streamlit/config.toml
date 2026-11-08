@@ -1,0 +1,20 @@
+[theme]
+base = "light"
+primaryColor = "#1266d9"
+backgroundColor = "#f5f8fc"
+secondaryBackgroundColor = "#eaf1fa"
+textColor = "#142e50"
+font = "sans-serif"
+headingFont = "sans-serif"
+borderColor = "#dce6f2"
+baseRadius = "0.75rem"
+buttonRadius = "0.65rem"
+showWidgetBorder = true
+chartCategoricalColors = ["#1266d9", "#17a6b8", "#f5a344", "#5c7da7"]
+
+[server]
+maxUploadSize = 200
+headless = true
+
+[browser]
+gatherUsageStats = false

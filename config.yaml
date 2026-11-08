@@ -15,7 +15,7 @@ project:
 
 video:
   # Đường dẫn video đầu vào (tương đối hoặc tuyệt đối)
-  input: "dataset/input_video/traffic.mp4"
+  input: "dataset/input_video/2.mp4"
 
   # Đường dẫn video kết quả đầu ra
   output: "outputs/videos/result.mp4"
@@ -25,15 +25,12 @@ video:
 
   # Hiển thị cửa sổ OpenCV khi chạy CLI
   display: true
+  # Cửa sổ vẫn chỉ nhanh bằng YOLO/ByteTrack inference thực tế.
+  # 1 = hiện mọi frame; 3 = chỉ hiện mỗi frame thứ 3 (ít cập nhật hơn).
+  display_every_n_frames: 1
 
   # Lưu video kết quả
   save_output: true
-
-  # Thay đổi kích thước video đầu vào (tăng tốc xử lý)
-  resize:
-    enabled: true
-    width: 960
-
 
 # ============================================================
 # MÔ HÌNH PHÁT HIỆN PHƯƠNG TIỆN (YOLOv8)
@@ -41,11 +38,16 @@ video:
 
 yolo:
   # Đường dẫn mô hình YOLOv8
-  # Các lựa chọn: yolov8n.pt (nhanh), yolov8s.pt, yolov8m.pt (chính xác hơn)
-  model: "models/yolov8n.pt"
+  # Dùng thống nhất với detector đã tạo checkpoint huấn luyện RF trên Kaggle.
+  model: "models/yolov8m.pt"
 
   # Ngưỡng tin cậy phát hiện (confidence threshold)
-  confidence: 0.30
+  confidence: 0.10
+
+  # Kích thước suy luận YOLO; bounding box vẫn theo tọa độ video gốc.
+  imgsz: 1280
+  max_det: 300
+  agnostic_nms: true
 
   # Ngưỡng IoU cho Non-Maximum Suppression
   iou: 0.50
@@ -66,9 +68,7 @@ yolo:
     - 2   # Ô tô
     - 3   # Xe máy
     - 5   # Xe buýt
-    - 6   # Tàu hỏa / xe lóa đèn ban đêm
     - 7   # Xe tải
-
 
 # ============================================================
 # THEO DÕI ĐA ĐỐI TƯỢNG (ByteTrack Tracker)
@@ -79,7 +79,7 @@ tracker:
   type: "bytetrack"
 
   # Tệp cấu hình ByteTrack
-  config: "bytetrack.yaml"
+  config: "configs/bytetrack_detail.yaml"
 
   # Số frame tối đa giữ trajectory khi mất phát hiện
   max_missed_frames: 15
@@ -93,47 +93,26 @@ tracker:
 # ============================================================
 
 perspective:
-  # Bật/tắt chuyển đổi phối cảnh
-  # Khi tắt: hệ thống sử dụng tọa độ pixel thay vì tọa độ mét thực tế
-  enabled: true
+  # CHÚ Ý: Chỉ bật nếu source_points/destination_points đã hiệu chỉnh
+  # đúng cho camera đang dùng; video từ camera khác phải hiệu chỉnh riêng.
+  enabled: false
 
-  # ----------------------------------------------------------
-  # ĐIỂM NGUỒN (Source Points)
-  # 4 điểm trên ảnh camera (tọa độ pixel)
-  # Thứ tự: trên-trái → trên-phải → dưới-phải → dưới-trái
-  # ----------------------------------------------------------
+  # Mở rộng vùng tứ giác bao phủ toàn bộ ngã tư để không bị méo tọa độ ở rìa trái
   source_points:
-    - [320, 230]
-    - [950, 230]
-    - [1200, 700]
-    - [100, 700]
+    - [180, 140]
+    - [880, 140]
+    - [1150, 680]
+    - [20, 680]
 
-  # ----------------------------------------------------------
-  # ĐIỂM ĐÍCH (Destination Points)
-  # Hình chữ nhật Bird's Eye View (tọa độ pixel BEV)
-  # ----------------------------------------------------------
   destination_points:
     - [0, 0]
     - [800, 0]
-    - [800, 1200]
-    - [0, 1200]
+    - [800, 1000]
+    - [0, 1000]
 
-  # ----------------------------------------------------------
-  # Tỉ lệ chuyển đổi Pixel → Mét
-  # ⚠️ GIÁ TRỊ MẪU — Cần calibration theo camera thực tế
-  # để đảm bảo tính chính xác của tốc độ và khoảng cách
-  # ----------------------------------------------------------
-  meters_per_pixel_x: 0.05
-  meters_per_pixel_y: 0.05
-
-
-# ============================================================
-# QUẢN LÝ QUỸ ĐẠO & NỘI SUY (Trajectory & Interpolation)
-# ============================================================
-
-trajectory:
-  # Khoảng trống frame tối đa được phép nội suy
-  max_interpolation_gap: 15
+  # Hiệu chỉnh tỉ lệ thực tế cho góc camera ngã tư (1000px ~ 20 mét)
+  meters_per_pixel_x: 0.02
+  meters_per_pixel_y: 0.02
 
 
 # ============================================================
@@ -179,8 +158,11 @@ classifier:
 # ============================================================
 
 output:
-  # Lưu tệp CSV đặc trưng
-  save_csv: true
+  # Chỉ bật khi chủ động trích đặc trưng để kiểm tra/huấn luyện.
+  # Chạy phân tích thông thường không tạo CSV trung gian.
+  save_csv: false
+  # Chỉ ghi 1 dòng mỗi xe sau mỗi N frame. Không giảm tần suất inference.
+  csv_interval_frames: 5
 
   # Lưu video kết quả
   save_video: true
@@ -208,4 +190,12 @@ visual_verification:
   enabled: true
   model: "models/visual_accident_classifier.pth"
   threshold: 0.40
+
+# Demo/CLI use the same checked vehicle-pair profile. Training assets remain separate.
+demo:
+  model: "outputs/vehicle_pair_training/accident_pair_verifier.pt"
+  model_name: "Vehicle Pair Verifier"
+  profile: "outputs/vehicle_pair_runtime/runtime_policy.json"
+  max_duration_seconds: 120
+  cache_directory: "outputs/pair_demo"
 

@@ -1,0 +1,10 @@
+# ByteTrack settings shared with the Kaggle RF feature extraction.
+# Same new-ID threshold/buffer as Ultralytics defaults; weak detections can
+# recover an existing lost track without score fusion dominating the IoU cost.
+tracker_type: bytetrack
+track_high_thresh: 0.15
+track_low_thresh: 0.10
+new_track_thresh: 0.25
+track_buffer: 30
+match_thresh: 0.70
+fuse_score: false

@@ -27,7 +27,8 @@ class VisualAccidentVerifier:
     ) -> None:
         self.model_path = Path(model_path)
         self.threshold = threshold
-        self.device = torch.device(device)
+        device_name = str(device).strip() if device is not None else "cpu"
+        self.device = torch.device(device_name or "cpu")
         self.model: Optional[nn.Module] = None
         self.enabled = False
 
@@ -48,7 +49,7 @@ class VisualAccidentVerifier:
             print(f"[WARN] Visual classifier model not found at {self.model_path}")
 
     def _load_model(self) -> None:
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
         model = models.mobilenet_v3_small(weights=None)
         in_features = model.classifier[0].in_features
         model.classifier = nn.Sequential(

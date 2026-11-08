@@ -1,238 +1,181 @@
-"""
-Công cụ trích xuất đặc trưng hàng loạt từ thư mục video (Batch Video Feature Extractor).
-
-Dùng để tự động xử lý nhiều video giao thông / tai nạn thực tế
-và tạo ra file CSV đặc trưng phục vụ huấn luyện mô hình.
-
-Cách dùng:
-    python dataset/extract_dataset_from_videos.py --video-dir dataset/videos --label-accident --output dataset/extracted_features.csv
-"""
+"""Extract unlabeled vehicle features with the runtime pipeline (explicit CLI only)."""
 from __future__ import annotations
 
 import argparse
 import csv
+import math
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from uuid import uuid4
 
 import cv2
-import numpy as np
 
+from core.feature_pipeline import (
+    FEATURE_PIPELINE_VERSION, RF_FEATURE_COLUMNS, MotionFeaturePipeline,
+    feature_signature, file_sha256, tracker_parameters,
+)
 from core.tracker import ByteTrackTracker
-from core.features import FeatureExtractor
-from core.transformer import PerspectiveTransformer
+from main import load_config
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FEATURE_FIELDS = [
+    "extraction_id", "feature_signature", "feature_schema_version", "video_id",
+    "source_path", "source_sha256", "source_group", "camera_group", "split_group",
+    "detection_profile", "coordinate_mode", "source_fps", "width", "height",
+    "frame_id", "source_time_s", "runtime_time_s", "track_id", "class_name",
+    "detection_confidence", "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2", "x_m", "y_m",
+    *RF_FEATURE_COLUMNS,
+]
 
 
-def process_video(
-    video_path: Path,
-    tracker: ByteTrackTracker,
-    feature_extractor: FeatureExtractor,
-    transformer: Optional[PerspectiveTransformer],
-    is_accident_video: bool,
-    csv_writer: csv.DictWriter,
-    video_id: str,
-    max_frames: Optional[int] = None,
-) -> int:
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        print(f"[ERROR] Cannot open video: {video_path}")
-        return 0
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("Must be a positive integer")
+    return number
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or not np.isfinite(fps):
-        fps = 30.0
 
-    feature_extractor.fps = fps
-    feature_extractor.dt = 1.0 / fps
-
-    frame_id = 0
-    previous_positions: Dict[int, np.ndarray] = {}
-    previous_velocities: Dict[int, np.ndarray] = {}
-    previous_directions: Dict[int, float] = {}
-    previous_speeds: Dict[int, float] = {}
-
-    written_rows = 0
-
+def process_video(video_path: Path, tracker, config: dict, writer, identity: dict,
+                  sample_every: int = 1, max_frames: int | None = None) -> dict:
+    if type(sample_every) is not int or sample_every <= 0:
+        raise ValueError("sample_every must be a positive integer")
+    if max_frames is not None and (type(max_frames) is not int or max_frames <= 0):
+        raise ValueError("max_frames must be a positive integer")
+    capture = cv2.VideoCapture(str(video_path))
     try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
+        if not capture.isOpened():
+            raise RuntimeError(f"Cannot open source video: {video_path}")
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        if not math.isfinite(fps) or fps <= 0:
+            fps = 30.  # Same fallback as TrafficAccidentPipeline._open_video.
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        motion = MotionFeaturePipeline(config, fps=fps)
+        rows, frame_id = 0, 0
+        while max_frames is None or frame_id < max_frames:
+            success, frame = capture.read()
+            if not success:
                 break
-
             frame_id += 1
-            if max_frames and frame_id > max_frames:
-                break
-
-            tracks = tracker.update(frame)
-            # Lọc chỉ các phương tiện giao thông
-            tracks = [t for t in tracks if t.is_vehicle]
-
-            # Tọa độ thế giới
-            world_positions: Dict[int, np.ndarray] = {}
-            for t in tracks:
-                px, py = t.bottom_center
-                if transformer is not None:
-                    wx, wy = transformer.image_to_world(px, py)
-                else:
-                    wx, wy = px * 0.05, py * 0.05
-                world_positions[t.track_id] = np.array([wx, wy], dtype=np.float32)
-
-            for t in tracks:
-                tid = t.track_id
-                curr_pos = world_positions[tid]
-                prev_pos = previous_positions.get(tid)
-                prev_vel = previous_velocities.get(tid)
-                prev_dir = previous_directions.get(tid)
-                prev_spd = previous_speeds.get(tid, 0.0)
-
-                feat = feature_extractor.extract(
-                    track_id=tid,
-                    current_position=curr_pos,
-                    previous_position=prev_pos,
-                    previous_velocity=prev_vel,
-                    previous_direction=prev_dir,
-                    previous_speed=prev_spd,
-                    all_vehicle_positions=world_positions,
-                    all_vehicle_velocities=previous_velocities,
-                    object_type=t.object_type,
-                )
-
-                if prev_pos is not None:
-                    vel = feature_extractor.calculate_velocity(prev_pos, curr_pos, track_id=tid)
-                else:
-                    vel = np.zeros(2, dtype=np.float32)
-
-                previous_positions[tid] = curr_pos.copy()
-                previous_velocities[tid] = vel.copy()
-                previous_directions[tid] = feat.direction_deg
-                previous_speeds[tid] = feat.speed_mps
-
-                # Xác định nhãn
-                # Với video tai nạn, các frame có phanh gấp hoặc đổi hướng mạnh sẽ là ACCIDENT
-                if is_accident_video:
-                    is_crash = (feat.deceleration_mps2 >= 3.5 or feat.direction_change_deg >= 35.0 or feat.speed_drop_window_mps >= 5.0)
-                    status = "POSSIBLE ACCIDENT" if is_crash else "NORMAL"
-                    prob = 0.85 if is_crash else 0.05
-                else:
-                    status = "NORMAL"
-                    prob = 0.02
-
-                row = {
-                    "video_id": video_id,
-                    "frame_id": frame_id,
-                    "timestamp": frame_id / fps,
-                    "track_id": tid,
-                    "class_name": t.class_name,
-                    "object_type": t.object_type,
-                    "x_m": feat.x_m,
-                    "y_m": feat.y_m,
-                    "speed_mps": feat.speed_mps,
-                    "acceleration_mps2": feat.acceleration_mps2,
-                    "deceleration_mps2": feat.deceleration_mps2,
-                    "speed_delta_mps": feat.speed_delta_mps,
-                    "direction_deg": feat.direction_deg,
-                    "direction_change_deg": feat.direction_change_deg,
-                    "yaw_rate_dps": feat.yaw_rate_dps,
-                    "lateral_acceleration_mps2": feat.lateral_acceleration_mps2,
-                    "jerk_mps3": feat.jerk_mps3,
-                    "nearest_distance_m": feat.nearest_distance_m,
-                    "neighbor_count": feat.neighbor_count,
-                    "has_neighbor": feat.has_neighbor,
-                    "nearest_distance_valid": feat.nearest_distance_valid,
-                    "closing_speed_mps": feat.closing_speed_mps,
-                    "interaction_count": feat.interaction_count,
-                    "sudden_stop": feat.sudden_stop,
-                    "trajectory_change": feat.trajectory_change,
-                    "speed_drop_window_mps": feat.speed_drop_window_mps,
-                    "direction_change_max_deg": feat.direction_change_max_deg,
-                    "direction_change_sum_deg": feat.direction_change_sum_deg,
-                    "speed_mean_mps": feat.speed_mean_mps,
-                    "speed_std_mps": feat.speed_std_mps,
-                    "acceleration_std_mps2": feat.acceleration_std_mps2,
-                    "stopped_after_motion": feat.stopped_after_motion,
-                    "temporal_window": feat.temporal_window,
-                    "interpolated": 0,
-                    "accident_probability": prob,
-                    "status": status,
-                }
-                csv_writer.writerow(row)
-                written_rows += 1
-
+            tracks = [t for t in tracker.update(frame) if t.is_vehicle]
+            features = motion.extract(tracks, motion.world_positions(tracks), frame_id)
+            # Process every frame; sampling only reduces exported rows.
+            if frame_id % sample_every:
+                continue
+            for track in tracks:
+                feature = features[track.track_id]
+                values = {name: getattr(feature, name) for name in RF_FEATURE_COLUMNS}
+                if not all(math.isfinite(float(value)) for value in values.values()):
+                    raise ValueError(f"Non-finite features: {video_path}, frame {frame_id}, track {track.track_id}")
+                writer.writerow({
+                    **identity, "feature_schema_version": FEATURE_PIPELINE_VERSION,
+                    "coordinate_mode": "configured_homography" if motion.transformer is not None else "approximate_scale",
+                    "source_fps": fps, "width": width, "height": height,
+                    "frame_id": frame_id, "source_time_s": (frame_id - 1) / fps,
+                    "runtime_time_s": frame_id / fps, "track_id": track.track_id,
+                    "class_name": track.class_name, "detection_confidence": track.confidence,
+                    **dict(zip(("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2"), map(float, track.bbox))),
+                    "x_m": feature.x_m, "y_m": feature.y_m, **values,
+                })
+                rows += 1
+        if frame_id == 0:
+            raise RuntimeError(f"No decodable frames: {video_path}")
+        return {"frames": frame_id, "rows": rows, "fps": fps}
     finally:
-        cap.release()
-
-    return written_rows
+        capture.release()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract features from multiple videos.")
-    parser.add_argument("--video-dir", required=True, help="Directory containing .mp4 or .avi files")
-    parser.add_argument("--output", default="dataset/extracted_features.csv", help="Output CSV path")
-    parser.add_argument("--yolo-model", default="models/yolov8n.pt", help="Path to YOLO weights")
-    parser.add_argument("--label-accident", action="store_true", help="Mark anomalies in these videos as accident")
-    parser.add_argument("--max-frames", type=int, default=None, help="Max frames per video to process")
+def extract_dataset(video_dir: Path, output: Path, config: dict, *, project_root=PROJECT_ROOT,
+                    limit_videos=None, max_frames=None, sample_every=None, videos=None,
+                    camera_group="", overwrite=False) -> dict:
+    video_dir, output = Path(video_dir).resolve(), Path(output).resolve()
+    if not video_dir.is_dir():
+        raise FileNotFoundError(f"Video directory not found: {video_dir}")
+    if output.suffix.lower() != ".csv":
+        raise ValueError("Output must be an explicitly selected .csv file")
+    if output.exists() and not overwrite:
+        raise FileExistsError(f"Output already exists: {output}. Use --overwrite to replace it.")
+    if videos:
+        files = [(video_dir / name).resolve() for name in videos]
+        if any(not p.is_relative_to(video_dir) for p in files):
+            raise ValueError("Selected videos must be inside video_dir")
+    else:
+        files = sorted(p for p in video_dir.rglob("*") if p.is_file()
+                       and p.suffix.lower() in (".mp4", ".avi", ".mkv", ".mov", ".webm"))
+    if limit_videos is not None:
+        if type(limit_videos) is not int or limit_videos <= 0:
+            raise ValueError("limit_videos must be a positive integer")
+        files = files[:limit_videos]
+    if not files or any(not p.is_file() for p in files):
+        raise ValueError("No selected source videos are available")
+    interval = sample_every if sample_every is not None else int(config.get("output", {}).get("csv_interval_frames", 1))
+    if type(interval) is not int or interval <= 0:
+        raise ValueError("sample_every must be a positive integer")
+    signature = feature_signature(config, Path(project_root))
+    extraction_id = uuid4().hex
+    if config["perspective"].get("enabled", True):
+        print("[NOTE] Config homography must match these cameras; one intersection calibration does not calibrate unrelated Kaggle cameras.")
+    else:
+        print("[NOTE] Approximate scaling: m/mps fields are not calibrated measurements. Use the same config at inference.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    total = {"videos": 0, "frames": 0, "rows": 0, "duplicates_skipped": 0,
+             "extraction_id": extraction_id, "feature_signature": signature}
+    hashes = set()
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8-sig", newline="", dir=output.parent,
+                                         prefix=".features-", suffix=".tmp", delete=False) as file:
+            temporary = Path(file.name)
+            writer = csv.DictWriter(file, fieldnames=FEATURE_FIELDS)
+            writer.writeheader()
+            for path in files:
+                sha = file_sha256(path)
+                if sha in hashes:
+                    total["duplicates_skipped"] += 1
+                    continue
+                hashes.add(sha)
+                source_group = "sha256:" + sha
+                relative = path.relative_to(video_dir)
+                identity = {"extraction_id": extraction_id, "feature_signature": signature,
+                            "video_id": relative.with_suffix("").as_posix(), "source_path": relative.as_posix(),
+                            "source_sha256": sha, "source_group": source_group, "camera_group": camera_group,
+                            "split_group": camera_group or source_group,
+                            "detection_profile": "fixed"}
+                # A fresh tracker and state prevent cross-video history/identities.
+                tracker = ByteTrackTracker(**tracker_parameters(config, Path(project_root)))
+                result = process_video(path, tracker, config, writer, identity, interval, max_frames)
+                total["videos"] += 1
+                total["frames"] += result["frames"]
+                total["rows"] += result["rows"]
+                print(f"{relative}: {result['frames']} frames, {result['rows']} rows")
+        if not total["rows"]:
+            raise ValueError("No vehicle feature rows were produced; no CSV was saved")
+        if output.exists() and not overwrite:
+            raise FileExistsError(output)
+        temporary.replace(output)
+        return total
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--video-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True, help="Only this CSV is retained; no implicit output path")
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config.yaml")
+    parser.add_argument("--videos", nargs="+", help="Specific paths relative to video-dir; otherwise find videos recursively")
+    parser.add_argument("--limit-videos", type=positive_int)
+    parser.add_argument("--max-frames", type=positive_int)
+    parser.add_argument("--sample-every", type=positive_int)
+    parser.add_argument("--camera-group", default="", help="Only group videos verified to share a camera")
+    parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
-
-    v_dir = Path(args.video_dir)
-    if not v_dir.exists():
-        raise FileNotFoundError(f"Video directory not found: {v_dir}")
-
-    video_files = list(v_dir.glob("*.mp4")) + list(v_dir.glob("*.avi")) + list(v_dir.glob("*.mkv"))
-    if not video_files:
-        raise ValueError(f"No video files found in {v_dir}")
-
-    print(f"Found {len(video_files)} videos in {v_dir}")
-
-    tracker = ByteTrackTracker(model_path=args.yolo_model, confidence=0.25, vehicle_only=True)
-    feature_extractor = FeatureExtractor(fps=30.0)
-
-    out_p = Path(args.output)
-    out_p.parent.mkdir(parents=True, exist_ok=True)
-
-    from main import load_config
-    cfg_p = Path(__file__).resolve().parent.parent / "config.yaml"
-    transformer = None
-    if cfg_p.exists():
-        cfg = load_config(str(cfg_p))
-        if cfg.get("perspective", {}).get("enabled", False):
-            p_cfg = cfg["perspective"]
-            transformer = PerspectiveTransformer(
-                source_points=np.array(p_cfg["source_points"], dtype=np.float32),
-                destination_points=np.array(p_cfg["destination_points"], dtype=np.float32),
-                meters_per_pixel_x=p_cfg.get("meters_per_pixel_x", 0.05),
-                meters_per_pixel_y=p_cfg.get("meters_per_pixel_y", 0.05),
-            )
-
-    fieldnames = [
-        "video_id", "frame_id", "timestamp", "track_id", "class_name", "object_type",
-        "x_m", "y_m", "speed_mps", "acceleration_mps2", "deceleration_mps2", "speed_delta_mps",
-        "direction_deg", "direction_change_deg", "yaw_rate_dps", "lateral_acceleration_mps2",
-        "jerk_mps3", "nearest_distance_m", "neighbor_count", "has_neighbor", "nearest_distance_valid",
-        "closing_speed_mps", "interaction_count", "sudden_stop", "trajectory_change",
-        "speed_drop_window_mps", "direction_change_max_deg", "direction_change_sum_deg",
-        "speed_mean_mps", "speed_std_mps", "acceleration_std_mps2", "stopped_after_motion",
-        "temporal_window", "interpolated", "accident_probability", "status",
-    ]
-
-    total_rows = 0
-    with out_p.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for idx, vf in enumerate(video_files):
-            print(f"[{idx+1}/{len(video_files)}] Processing: {vf.name} ...")
-            cnt = process_video(
-                video_path=vf,
-                tracker=tracker,
-                feature_extractor=feature_extractor,
-                transformer=transformer,
-                is_accident_video=args.label_accident,
-                csv_writer=writer,
-                video_id=vf.stem,
-                max_frames=args.max_frames,
-            )
-            total_rows += cnt
-
-    print(f"\nExtraction complete! Total {total_rows} rows written to: {out_p}")
+    config = load_config(str(args.config))
+    print(extract_dataset(args.video_dir, args.output, config, videos=args.videos,
+                          limit_videos=args.limit_videos, max_frames=args.max_frames,
+                          sample_every=args.sample_every, camera_group=args.camera_group,
+                          overwrite=args.overwrite))
 
 
 if __name__ == "__main__":

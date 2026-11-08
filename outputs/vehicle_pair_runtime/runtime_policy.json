@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "demo_enabled": true,
+  "production_deployment_approved": false,
+  "decision_rule": "observed_pair_or_single_vehicle_fallback_v2",
+  "threshold": 0.6890791654586793,
+  "threshold_selected_on": "two_calibration_NORMAL_clips_only_small_smoke_test",
+  "model": "outputs/vehicle_pair_training/accident_pair_verifier.pt",
+  "geometry_model": "outputs/vehicle_pair_training/validated/geometry/geometry_baseline.joblib",
+  "scope": "experimental_four_wheel_pair_contact_and_single_vehicle_fallback_not_motorcycle_or_pedestrian",
+  "checked_code": {
+    "app.py": "f365bbdb15331ce4e9534a15771ba44aef5f463a931c596ace5f07f7ef8e7a59",
+    "main.py": "6ea2b154bd9544820ef19a5f241ba101f916962d7e5ad5df5cd3be63ebe876ae",
+    "config.yaml": "7f44ee6eff72d233553ec71d08e321dc01684bde96272b3f87c86a0b6c86ff5c",
+    "utils/pair_demo.py": "545b919eee928a7ea7cf4e8425e4eb340867f1c5fdfeef8009a0a95ebe371760",
+    "utils/pair_pipeline.py": "89344eb005e73fc4c2e123e661aca17f635c8c412ec6eb5a1d54be24c3cb824b",
+    "utils/pair_events.py": "3de830f1da5bbad985be0e31d494f44ae842a397143ca335d32597ac8271a4a2",
+    "utils/pair_verifier.py": "c6611c3b48042edbd3dbe25e9585e5d87ccf21eaad0974ab879fc7ca3ee308e4",
+    "utils/vehicle_pairs.py": "221594356ac3785a551cee5b1eacee9191f20e4186fd4441f441d69c0e7626ba",
+    "utils/video_writer.py": "b6ed2d58338479622ece8c86597fb4dc327945146df7d87609904a42ca0772de",
+    "core/tracker.py": "6e9edd46269a47f8c4079318db2f875c8ce1472200986c9f0aa68e24e0fcae21",
+    "core/feature_pipeline.py": "4f0906db0d85c7b7fe7227477007b7642c46cea2c70428574f9e4488233bb059",
+    "evaluate_vehicle_pairs.py": "b18e7df150574b151efbcc107c8e001d85c0c3b65e778abfc346e740887fc7ec",
+    "configs/bytetrack_detail.yaml": "425be72d89f8a31c61ff79814648a41e443e8060b0b8436707a38a09f496584a",
+    "utils/single_vehicle.py": "9cde3d16e9261a155b41cb423a2a22ba481088a949f44220f82765330e8dfca2",
+    "utils/single_vehicle_runtime.py": "c89f745d0052c479f6c5d2863b36d7aef9005a67290848990d667a2aee763a1f",
+    "utils/history.py": "58c16f2347a5ac491f862c5d665642fa9366c9f9f1027e3192a1eba9c0cd4778",
+    "utils/scene_objects.py": "d88d1ff4f9a7c22c62f4f2d40be530fe8854cd1914d7aee7e2b7f9f694c60342",
+    "utils/event_explanations.py": "3077cc616debc73440080081262a9677f6c4d8646b3830b06475f67e110ce877"
+  },
+  "runtime_versions": {
+    "torch": "2.14.0",
+    "ultralytics": "8.4.152",
+    "scikit-learn": "1.9.1",
+    "pytorchvideo": "0.1.5"
+  },
+  "smoke_evaluation_sha256": "6c4e9a214a3db6847e7fed59ac00f9e235f8954aac1f42e3e2a16b2e386929a9",
+  "smoke_plan_sha256": "a76fe0d8eefb99db0dfecf1732631ecf153f6e0fcfed4847894702d57cd00fcb",
+  "known_positive_diagnostics": [
+    {
+      "source_sha256": "67349a980f65943aef78647e366db55204aa37c7f20f1c7157f2ac872d0714d5",
+      "events": 1,
+      "score": 0.9175127412271117,
+      "role": "known_positive_diagnostic_not_independent_accuracy"
+    },
+    {
+      "source_sha256": "8d57ff46275b11cc7e863d708c2d88268306a06c24b63b85875cf1b30e82bf87",
+      "events": 1,
+      "score": 0.8123457431793213,
+      "role": "known_positive_diagnostic_not_independent_accuracy"
+    }
+  ],
+  "independent_positive_accuracy_evaluated": false,
+  "model_sha256": "0d8d01b63f03220d0d3d74c752476a547a08c2d60abfa341c51904a847dbfbbd",
+  "geometry_model_sha256": "bae7f243679627c5b167d2495f5d34f2302795c3a8bac5d8948c088102378697",
+  "single_vehicle": {
+    "enabled": true,
+    "model": "outputs/single_vehicle_training/single_vehicle_head.joblib",
+    "model_sha256": "2a318368a45ce7637ac1c67cca8277597d94af761ec411f74455a7c462ea4b48",
+    "threshold": 0.7128356702283838,
+    "rotation_threshold": 0.995940089225769,
+    "fusion": "only_if_established_pair_branch_has_no_events",
+    "production_deployment_approved": false,
+    "new_normal_checks_sha256": "6bd7de0ffbc1f55d88f5da1d17d6ecf7385226a8ea19da73857d45ab089a94a3",
+    "scope": "development_demo_not_independent_real_world_accuracy"
+  },
+  "detector_selection": {
+    "selected": "YOLOv8m",
+    "rejected_replacement": "RTDETR-L_640_conf_0.40",
+    "reason": "lost_demo_5_event_with_same_verifier_and_frozen_thresholds",
+    "evaluation": "outputs/detector_pipeline_comparison/selection.json",
+    "evaluation_sha256": "1f47729ae94d2a33343c44c9dbc63e08feed6062614642a8076ce8f11b1f6f97"
+  },
+  "maintenance": {
+    "content_addressed_trace_lookup": true,
+    "explicit_saved_result_button": true,
+    "model_and_event_thresholds_unchanged": true,
+    "motion_verification": {
+      "identity_maximum_step_box_diagonals": 0.75,
+      "identity_minimum_speed_for_jump_rejection": 8.0,
+      "geometry_minimum_pre_motion": 0.6,
+      "arrest_confirmation_grid_offset_seconds": 0.2,
+      "rotation_neighbours_must_pass": true,
+      "contact_attribution": "learned_arrest_plus_observed_contact_and_partner_response_v1",
+      "regression_scope": "development_replay_4_single_demo_and_7_normal_not_independent_accuracy"
+    }
+  }
+}

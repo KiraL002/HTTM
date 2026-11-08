@@ -3,7 +3,6 @@ AcciVision — Các module xử lý lõi (Core Processing Modules)
 
 Bao gồm:
 - AccidentClassifier: Phân loại tai nạn (Random Forest)
-- YOLODetector: Phát hiện phương tiện (YOLOv8)
 - EventDetector: Phát hiện & quản lý sự kiện tai nạn
 - FeatureExtractor: Trích xuất đặc trưng động học
 - ByteTrackTracker: Theo dõi đa đối tượng
@@ -12,11 +11,6 @@ Bao gồm:
 """
 
 from .classifier import AccidentClassifier
-
-from .detector import (
-    Detection,
-    YOLODetector,
-)
 
 from .event_detector import (
     AccidentEvent,
@@ -46,9 +40,6 @@ from .transformer import (
 
 __all__ = [
     "AccidentClassifier",
-
-    "Detection",
-    "YOLODetector",
 
     "AccidentEvent",
     "EventDetector",
