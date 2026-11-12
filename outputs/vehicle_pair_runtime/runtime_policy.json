@@ -9,13 +9,13 @@
   "geometry_model": "outputs/vehicle_pair_training/validated/geometry/geometry_baseline.joblib",
   "scope": "experimental_four_wheel_pair_contact_and_single_vehicle_fallback_not_motorcycle_or_pedestrian",
   "checked_code": {
-    "app.py": "f365bbdb15331ce4e9534a15771ba44aef5f463a931c596ace5f07f7ef8e7a59",
+    "app.py": "d95ff42618a8b8605655b5ff8d52de5af1c78b84fdbb47d9f1f0f0ff7e683f90",
     "main.py": "6ea2b154bd9544820ef19a5f241ba101f916962d7e5ad5df5cd3be63ebe876ae",
     "config.yaml": "7f44ee6eff72d233553ec71d08e321dc01684bde96272b3f87c86a0b6c86ff5c",
-    "utils/pair_demo.py": "545b919eee928a7ea7cf4e8425e4eb340867f1c5fdfeef8009a0a95ebe371760",
-    "utils/pair_pipeline.py": "89344eb005e73fc4c2e123e661aca17f635c8c412ec6eb5a1d54be24c3cb824b",
+    "utils/pair_demo.py": "489219ef73744622e4f1ca96973744b06c76ad8f20ff3fff559ea6203d46c2c7",
+    "utils/pair_pipeline.py": "0605a39203e22f3a1ff3be9f07eedcfabec10727b7996a01bc490eb9f9430fd1",
     "utils/pair_events.py": "3de830f1da5bbad985be0e31d494f44ae842a397143ca335d32597ac8271a4a2",
-    "utils/pair_verifier.py": "c6611c3b48042edbd3dbe25e9585e5d87ccf21eaad0974ab879fc7ca3ee308e4",
+    "utils/pair_verifier.py": "e30a08ca269c8e3d863850286285a40030685866c6a6eeaf691537aed58decf4",
     "utils/vehicle_pairs.py": "221594356ac3785a551cee5b1eacee9191f20e4186fd4441f441d69c0e7626ba",
     "utils/video_writer.py": "b6ed2d58338479622ece8c86597fb4dc327945146df7d87609904a42ca0772de",
     "core/tracker.py": "6e9edd46269a47f8c4079318db2f875c8ce1472200986c9f0aa68e24e0fcae21",
@@ -23,10 +23,12 @@
     "evaluate_vehicle_pairs.py": "b18e7df150574b151efbcc107c8e001d85c0c3b65e778abfc346e740887fc7ec",
     "configs/bytetrack_detail.yaml": "425be72d89f8a31c61ff79814648a41e443e8060b0b8436707a38a09f496584a",
     "utils/single_vehicle.py": "9cde3d16e9261a155b41cb423a2a22ba481088a949f44220f82765330e8dfca2",
-    "utils/single_vehicle_runtime.py": "c89f745d0052c479f6c5d2863b36d7aef9005a67290848990d667a2aee763a1f",
-    "utils/history.py": "58c16f2347a5ac491f862c5d665642fa9366c9f9f1027e3192a1eba9c0cd4778",
+    "utils/single_vehicle_runtime.py": "23b1245ff00656288b6d783cbc0f38591b6d505f2d08446f0a73a27b10297a8a",
+    "utils/history.py": "83dd5266eb29d276076022e26b1851ed60e565f5011118b8d17ad641c5a6c361",
     "utils/scene_objects.py": "d88d1ff4f9a7c22c62f4f2d40be530fe8854cd1914d7aee7e2b7f9f694c60342",
-    "utils/event_explanations.py": "3077cc616debc73440080081262a9677f6c4d8646b3830b06475f67e110ce877"
+    "utils/event_explanations.py": "3077cc616debc73440080081262a9677f6c4d8646b3830b06475f67e110ce877",
+    "utils/temporal_review.py": "4a559d6cda35e4294c95bcfb3b57c611188d7045b105e32326f11e6ea632c00f",
+    "core/temporal_anomaly.py": "f1162ffb23dfb3b38eebdc81712d95ff2e9b49c5b83ef238c9e5d44a0ce21076"
   },
   "runtime_versions": {
     "torch": "2.14.0",
@@ -83,6 +85,24 @@
       "rotation_neighbours_must_pass": true,
       "contact_attribution": "learned_arrest_plus_observed_contact_and_partner_response_v1",
       "regression_scope": "development_replay_4_single_demo_and_7_normal_not_independent_accuracy"
+    },
+    "historical_replay_independent_of_current_policy": true,
+    "single_pass_pair_rgb_decoding": {
+      "pixels": "bitwise_equal_to_previous_sequential_reader",
+      "model_or_threshold_changed": false
     }
+  },
+  "temporal_proposals": {
+    "enabled": true,
+    "model": "models/traffic_anomaly_videomae_s.pth",
+    "model_sha256": "b54a2507b39a6bb4d4536f315939e6491c64634a7009b81514cdf86e194eb34a",
+    "source": "https://github.com/Pac1FF1zM/traffic_checker (Simple-TAD DADA fine-tuned checkpoint)",
+    "role": "proposal_only_then_existing_pair_or_single_verification",
+    "candidate_enter": 0.75,
+    "candidate_release": 0.5,
+    "minimum_samples": 2,
+    "threshold_scope": "diagnostic_defaults_not_CCTV_calibration",
+    "production_deployment_approved": false,
+    "verification_priority": "established_event_explains_scene_episode; pair_first_then_single_fallback_per_unexplained_episode"
   }
 }

@@ -15,7 +15,14 @@ import streamlit as st
 from utils.pair_demo import (VERSION, POLICY_PATH, profile, cache_key,
                              file_sha, run_analysis, video_info, checked_events,
                              read_result_cache as read_cached, save_result_cache as save_cached)
-from utils.history import HistoryStore
+from utils import history as history_module
+# Streamlit can rerun app.py while retaining an imported module from an older
+# release. Refresh the history API before registering callbacks using new methods.
+if not all(callable(getattr(history_module.HistoryStore, name, None))
+           for name in ('delete', 'cleanup_pending')):
+    from importlib import reload
+    history_module = reload(history_module)
+HistoryStore = history_module.HistoryStore
 from utils.event_explanations import describe_event
 
 ROOT = Path(__file__).resolve().parent
@@ -85,6 +92,14 @@ def event_rows(result):
             for i, e in enumerate(result["events"], 1)]
 
 
+def show_video(active, start=0):
+    st.subheader("Xem lại video đánh dấu", anchor=False)
+    st.video(active["video"], start_time=start)
+    st.download_button("Tải video kết quả", active["video"],
+                       file_name=f"accivision_{Path(active['name']).stem}.mp4",
+                       mime="video/mp4", icon=":material/download:", on_click="ignore")
+
+
 def show_result(active):
     r = active["result"]
     events = checked_events(r)
@@ -102,6 +117,24 @@ def show_result(active):
     a.metric("Sự kiện nghi ngờ", len(events))
     b.metric("ID xe được AI đánh dấu", len({actor for e in events for actor in e["track_ids"]}))
     c.metric("Mốc đầu tiên", f'{min(e["time_s"] for e in events):.2f} giây' if events else "—")
+    review = r.get('temporal_review')
+    if review is not None:
+        with st.expander('Các đoạn bất thường đã được kiểm tra', expanded=False):
+            st.caption('Điểm bất thường chọn đoạn cần kiểm tra. Mốc trên đường biểu diễn là cuối cửa sổ ngữ cảnh, không phải thời điểm va chạm.')
+            timeline = review['models']['temporal']['timeline']
+            st.line_chart([{'Giây': row['window_end_s'], 'Điểm bất thường': row['score'],
+                            'Ngưỡng chọn đoạn': review['thresholds']['enter']} for row in timeline],
+                          x='Giây', y=['Điểm bất thường', 'Ngưỡng chọn đoạn'],
+                          color=['#2160a6', '#aab9cc'], height=200)
+            checks = review.get('verification', [])
+            if checks:
+                st.dataframe([{'Đoạn kiểm tra (giây)': f"{v['start_s']:.2f}–{v['end_s']:.2f}",
+                               'Kết quả xác minh': 'Có bằng chứng sự cố' if v['state']=='incident_evidence' else 'Chưa đủ bằng chứng tai nạn',
+                               'Mốc sự cố được xác minh': ', '.join(f'{t:.2f}s' for t in v['event_times_s']) or '—'} for v in checks],
+                             hide_index=True, width='stretch')
+            else:
+                st.caption('Không có đoạn vượt ngưỡng đủ liên tiếp. Hệ thống vẫn kiểm tra ứng viên chuyển động và tiếp xúc.')
+            st.caption('Đoạn chưa đủ bằng chứng không được đưa vào số sự kiện tai nạn. Ngưỡng chọn đoạn đang là cấu hình thử nghiệm trên CCTV.')
     if r.get('object_summary'):
         st.subheader('Đối tượng được quan sát', anchor=False)
         objects = [{'Đối tượng': item['label'], 'Số ID theo dõi': item['observed_track_ids'],
@@ -135,11 +168,7 @@ def show_result(active):
         st.download_button("Tải danh sách sự kiện (.csv)", csv_data(event_rows(r)),
                            file_name=f"accivision_{Path(active['name']).stem}_events.csv",
                            mime="text/csv", on_click="ignore")
-    st.subheader("Xem lại video đánh dấu", anchor=False)
-    st.video(active["video"], start_time=start)
-    st.download_button("Tải video kết quả", active["video"],
-                       file_name=f"accivision_{Path(active['name']).stem}.mp4",
-                       mime="video/mp4", icon=":material/download:", on_click="ignore")
+    show_video(active, start)
 
 
 try:
@@ -164,6 +193,53 @@ def remember(key, source_sha, name, analysis_id=None, processing_seconds=None):
                 pass
 
 
+def delete_history_entry(analysis_id=None):
+    confirmation = 'history_delete_confirm_' + analysis_id if analysis_id else 'history_delete_confirm'
+    if HISTORY is None or not st.session_state.get(confirmation):
+        return
+    try:
+        deleted = HISTORY.delete(analysis_id) if analysis_id else HISTORY.clear()
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        st.session_state['history_delete_error'] = 'Chưa xóa được lịch sử: ' + str(exc)
+        return
+    active = st.session_state.get('active_result')
+    if not analysis_id or (active and active['key'] == deleted['cache_key']
+                           and not deleted['shared_results_retained']):
+        st.session_state['active_result'] = None
+        for key in list(st.session_state):
+            if key.startswith('event_') and (not analysis_id or key == 'event_' + deleted['cache_key']):
+                del st.session_state[key]
+    st.session_state.pop('history_selected', None)
+    st.session_state.pop(confirmation, None)
+    st.session_state.pop('history_delete_error', None)
+    if analysis_id:
+        notice = f"Đã xóa lượt phân tích của {deleted['source_name']}."
+        notice += (' Kết quả dùng chung được giữ cho các lượt còn lại.'
+                   if deleted['shared_results_retained'] else ' Đã xóa ảnh và video kết quả riêng của lượt này.')
+    else:
+        notice = f"Đã xóa {deleted['analyses']} lượt lịch sử cùng kết quả, ảnh và video đã lưu."
+    pending = list(dict.fromkeys(st.session_state.get('history_pending_cleanup', []) + deleted['pending_cleanup']))
+    st.session_state['history_pending_cleanup'] = pending
+    if pending:
+        notice += ' Một số tệp đang bị khóa; hãy đóng video rồi bấm Dọn tệp chờ xóa.'
+    st.session_state['history_delete_pending'] = bool(pending)
+    st.session_state['history_delete_notice'] = notice
+
+
+def cleanup_history_files():
+    if HISTORY is None:
+        return
+    try:
+        pending = HISTORY.cleanup_pending(st.session_state.get('history_pending_cleanup', []))
+    except (OSError, ValueError) as exc:
+        st.session_state['history_delete_error'] = 'Chưa dọn được tệp chờ xóa: ' + str(exc)
+        return
+    st.session_state['history_pending_cleanup'] = pending
+    st.session_state['history_delete_pending'] = bool(pending)
+    st.session_state['history_delete_notice'] = ('Một số tệp vẫn đang bị khóa. Hãy đóng video rồi thử lại.'
+                                                if pending else 'Đã dọn xong tệp chờ xóa.')
+
+
 def history_page():
     st.subheader("Lịch sử phân tích", anchor=False)
     st.caption("Lưu trên máy này. Mở lại kết quả không chạy mô hình và không tạo lượt suy luận mới.")
@@ -176,25 +252,16 @@ def history_page():
             st.warning(notice)
         else:
             st.success(notice)
+    error = st.session_state.pop('history_delete_error', None)
+    if error:
+        st.error(error)
+    if st.session_state.get('history_pending_cleanup'):
+        st.button('Dọn tệp chờ xóa', on_click=cleanup_history_files, key='history_cleanup_pending')
     with st.expander('Xóa lịch sử và kết quả đã lưu'):
         st.caption('Xóa toàn bộ lượt phân tích, ảnh bằng chứng và video kết quả trên máy này, kể cả kết quả không còn trong danh sách. Video gốc và dữ liệu training được giữ lại.')
         confirmed = st.checkbox('Tôi muốn xóa toàn bộ lịch sử và kết quả đã lưu', key='history_delete_confirm')
-        if st.button('Xóa toàn bộ lịch sử', icon=':material/delete:', disabled=not confirmed, key='history_delete_all'):
-            try:
-                deleted = HISTORY.clear()
-            except (OSError, sqlite3.Error, ValueError) as exc:
-                st.error('Chưa xóa được lịch sử: ' + str(exc))
-            else:
-                st.session_state['active_result'] = None
-                for key in list(st.session_state):
-                    if key.startswith('event_') or key in ('history_selected', 'history_delete_confirm'):
-                        del st.session_state[key]
-                if deleted['pending_cleanup']:
-                    st.session_state['history_delete_pending'] = True
-                    st.session_state['history_delete_notice'] = 'Đã xóa lịch sử. Một số tệp đang bị khóa chưa xóa được; đóng video rồi thực hiện xóa một lần nữa để dọn hết.'
-                else:
-                    st.session_state['history_delete_notice'] = f"Đã xóa {deleted['analyses']} lượt lịch sử cùng kết quả, ảnh và video đã lưu."
-                st.rerun()
+        st.button('Xóa toàn bộ lịch sử', icon=':material/delete:', disabled=not confirmed,
+                  key='history_delete_all', on_click=delete_history_entry)
     try:
         totals = HISTORY.summary()
         a, b, c = st.columns(3)
@@ -226,9 +293,21 @@ def history_page():
     st.download_button("Tải lịch sử đang lọc (.csv)", csv_data(table),
                        file_name="accivision_history.csv", mime="text/csv", on_click="ignore")
     options = {r["id"]: f'{r["source_name"]} · {status(r)} · {r["started_at"]}' for r in rows}
+    if st.session_state.get('history_selected') not in options:
+        st.session_state.pop('history_selected', None)
     selected = st.selectbox("Chọn lượt để xem lại", list(options), format_func=options.get,
                             key="history_selected")
     row = next(r for r in rows if r["id"] == selected)
+    with st.expander('Xóa lượt phân tích đã chọn'):
+        st.write(f"Video: {row['source_name']} · {row['started_at']}")
+        st.caption('Chỉ xóa lượt đang chọn, đánh giá, ảnh và video kết quả của lượt này. Các lượt khác và video gốc được giữ nguyên. Nếu kết quả dùng chung với lượt khác, tệp kết quả được giữ lại.')
+        processing = row['status'] == 'processing'
+        if processing:
+            st.info('Chưa thể xóa lượt đang xử lý. Hãy dừng hoặc chờ phân tích kết thúc.')
+        confirmed_one = st.checkbox('Tôi muốn xóa riêng lượt phân tích này',
+                                    key='history_delete_confirm_' + selected, disabled=processing)
+        st.button('Xóa lượt này', icon=':material/delete:', disabled=processing or not confirmed_one,
+                  key='history_delete_one_' + selected, on_click=delete_history_entry, args=(selected,))
     if row["status"] == "failed":
         st.error("Lượt này không có kết luận NORMAL/ACCIDENT.")
         with st.expander("Chi tiết lỗi"):
@@ -330,19 +409,33 @@ if info:
             st.info("Bộ phân tích chưa sẵn sàng. " + (PROFILE_ERROR or ""))
         key = cache_key(source_sha) if model_ready else "unavailable"
         saved = read_cached(key, source_sha) if model_ready else None
+        historical = None
+        if not saved and HISTORY is not None:
+            try:
+                historical = HISTORY.latest(source_sha)
+            except (sqlite3.Error, OSError):
+                st.warning("Chưa tìm được bản lưu trong lịch sử. Bạn vẫn có thể phân tích video.")
         if saved:
             st.caption(":material/inventory_2: Có kết quả đã lưu cho đúng video và cấu hình này.")
+        elif historical:
+            st.caption(":material/inventory_2: Có bản đã lưu của video này trong lịch sử. Mở lại không chạy mô hình; bản lưu có thể dùng cấu hình trước đây.")
         action, refresh = st.columns([1.5, 1])
-        run = action.button("Mở kết quả đã lưu" if saved else "Bắt đầu phân tích", type="primary",
-                            icon=":material/inventory_2:" if saved else ":material/play_arrow:",
+        can_open = bool(saved or historical)
+        run = action.button("Mở kết quả đã lưu" if can_open else "Bắt đầu phân tích", type="primary",
+                            icon=":material/inventory_2:" if can_open else ":material/play_arrow:",
                             width="stretch", key="analyze",
-                            disabled=not model_ready or info["duration"] > 120.5)
+                            disabled=not can_open and (not model_ready or info["duration"] > 120.5))
         rerun = refresh.button("Phân tích lại", icon=":material/refresh:",
                                width="stretch", disabled=not model_ready or info["duration"] > 120.5,
                                help="Chạy lại toàn bộ mô hình từ video gốc, không tái sử dụng dữ liệu phân tích trung gian.")
     if run or rerun:
         st.session_state.active_result = None
-        if saved and not rerun:
+        if historical and not rerun:
+            try:
+                st.session_state.active_result = HISTORY.open(historical['id'])
+            except (sqlite3.Error, OSError, ValueError, KeyError, TypeError) as exc:
+                st.error("Không mở được bản lưu: " + str(exc))
+        elif saved and not rerun:
             result, video = saved
             st.session_state.active_result = dict(key=key, result=result, video=video, cached=True, name=source_name)
             remember(key, source_sha, source_name)
@@ -386,7 +479,7 @@ if info:
                 status.empty()
 
     active = st.session_state.active_result
-    if active and active["key"] == key:
+    if active and active["result"]["source_sha256"] == source_sha:
         show_result(active)
 
 else:

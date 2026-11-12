@@ -50,7 +50,7 @@ def candidate_windows(observations, proposal):
             windows[(extra['actor_id'],tuple(indices))]=extra
     return [w for w in windows.values() if coherent_identity(w,observations,fps)]
 
-def analyze(proposal,output=None,progress=None,threshold=None):
+def analyze(proposal,output=None,progress=None,threshold=None,additional_windows=None):
     output=Path(output or ROOT/'outputs/single_vehicle_runtime');output.mkdir(parents=True,exist_ok=True)
     package=joblib.load(MODEL)
     if package['protocol']!=PROTOCOL or package['input_code_sha256']!=sha(ROOT/'utils/single_vehicle.py'):
@@ -60,7 +60,8 @@ def analyze(proposal,output=None,progress=None,threshold=None):
         raise ValueError('Single-vehicle encoder changed')
     identity={'model_sha256':sha(MODEL),'trace_sha256':sha(proposal['detection_trace']),
               'source_sha256':sha(proposal['source']),'input_code_sha256':package['input_code_sha256'],
-              'runtime_sha256':sha(__file__),'protocol':PROTOCOL}
+              'runtime_sha256':sha(__file__),'protocol':PROTOCOL,
+              'additional_windows_sha256':hashlib.sha256(json.dumps(additional_windows or [],sort_keys=True,allow_nan=False).encode()).hexdigest()}
     key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest();cache=output/(key+'.json')
     if cache.exists():
         value=json.loads(cache.read_text(encoding='utf-8'))
@@ -69,6 +70,11 @@ def analyze(proposal,output=None,progress=None,threshold=None):
         with np.load(proposal['detection_trace'],allow_pickle=False) as data:observations=data['observations']
         observations=observations[np.isin(observations[:,2],[2,5,7])]
         windows=candidate_windows(observations,proposal)
+        seen={(w['actor_id'],tuple(w['indices'])) for w in windows}
+        for w in additional_windows or []:
+            key=(w['actor_id'],tuple(w['indices']))
+            if key not in seen and motion_supported(w['motion']) and coherent_identity(w,observations,proposal['fps']):
+                windows.append(w);seen.add(key)
         encoder=None;rows=[];torch.set_num_threads(4)
         for i,w in enumerate(windows):
             rotation=(w['motion']['course_change_degrees']>=60 and w['motion']['shape_change']>=.4)

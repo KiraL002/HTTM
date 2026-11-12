@@ -172,6 +172,57 @@ def read_clip(root, pair, window, boxes=None, _sequential=False, native_frames=N
     return np.stack(frames)
 
 
+def iter_clips(root, pair, windows):
+    """Yield (window index, identical attended pixels) with one sequential decode.
+
+    Shared-frame scheduling follows the single-pass temporal readers reviewed
+    in Simple-TAD/traffic_checker. Frames are still native decoder indices;
+    no seek approximation, interpolation, persistent cache or early verdict.
+    Only resized model inputs for unfinished windows are retained in memory.
+    """
+    windows = list(windows)
+    if not windows:
+        return
+    path = safe_video(root, pair["video"])
+    if path.stat().st_size != pair["video_bytes"]:
+        raise ValueError("Video differs from manifest")
+    schedule = {}
+    pending = {}
+    for key, window in windows:
+        indices = window["sample_frame_indices"]
+        if (key in pending or len(indices) != INPUT["frames"]
+                or any(i < 0 or int(i) != i for i in indices)
+                or any(b <= a for a, b in zip(indices, indices[1:]))
+                or len(window["sample_pair_boxes"]) != len(indices)):
+            raise ValueError("Invalid or duplicate pair window")
+        pending[key] = [None] * len(indices)
+        for position, (index, boxes) in enumerate(zip(indices, window["sample_pair_boxes"])):
+            schedule.setdefault(int(index), []).append((key, position, boxes, window["crop_xyxy"]))
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened() or abs(cap.get(cv2.CAP_PROP_FPS)-pair["fps_metadata"]) > .01:
+            raise ValueError("Cannot open video with prepared timing")
+        for index in range(max(schedule)+1):
+            ok, frame = cap.read()
+            if not ok:
+                raise ValueError(f"Cannot decode {path}, frame {index}")
+            if index not in schedule:
+                continue
+            if frame.shape[:2] != (pair["height"], pair["width"]):
+                raise ValueError("Source dimensions differ from preparation")
+            for key, position, boxes, bounds in schedule[index]:
+                pending[key][position] = attended_frame(frame, boxes, bounds)
+                if position == INPUT["frames"]-1:
+                    frames = pending.pop(key)
+                    if any(value is None for value in frames):
+                        raise ValueError("Incomplete pair window")
+                    yield key, np.stack(frames)
+        if pending:
+            raise ValueError("Incomplete pair clips")
+    finally:
+        cap.release()
+
+
 def build_encoder(state):
     from pytorchvideo.models.hub import x3d_s
     encoder = x3d_s(pretrained=False)

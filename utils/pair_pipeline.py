@@ -21,7 +21,7 @@ from core.tracker import ByteTrackTracker
 from core.feature_pipeline import tracker_parameters
 from .vehicle_pairs import PairCandidateTracker
 from .pair_events import POLICY, contact_proposals, decide
-from .pair_verifier import INPUT, PairHead, build_encoder, encode, geometry_features, read_clip
+from .pair_verifier import INPUT, PairHead, build_encoder, encode, geometry_features, iter_clips
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "outputs/vehicle_pair_training/accident_pair_verifier.pt"
@@ -121,30 +121,39 @@ class Verifier:
         eligible = [(i, w) for i, w in enumerate(result["windows"]) if any(
             w["track_ids"] == c["track_ids"] and w["context_start_seconds"] <= c["time_s"] <= w["context_end_seconds"]
             for c in contacts)]
-        rows = []
+        rows, rgb_windows, geometries = [], [], {}
         descriptor = {"video": Path(result["source"]).name, "video_bytes": Path(result["source"]).stat().st_size,
                       "fps_metadata": result["fps"], "height": result["height"], "width": result["width"]}
-        # Exact sequential reads for every clip avoid unreliable VFR frame seeks.
+        # Compute cheap geometry first, then decode overlapping RGB windows once.
+        # The sampled indices and attended pixels are identical to read_clip's
+        # exact sequential path, including fractional-FPS source videos.
         for index, window in eligible:
             g = geometry_features(window["sample_pair_boxes"], window["sample_frame_indices"], result["fps"])[None]
             geometry_score = float(self.geometry.predict_proba(g)[0, 1])
             rgb_score = None
             if geometry_score >= POLICY["score_floor"]:
-                self.load_rgb()
-                clip = read_clip(Path(result["source"]).parent, descriptor, window, _sequential=True)
+                rgb_windows.append((index, window))
+                geometries[index] = g
+            row = {k: window[k] for k in ("track_ids", "context_start_seconds", "context_end_seconds")}
+            row.update(window_index=index, geometry_score=geometry_score, rgb_score=rgb_score,
+                       joint_score=geometry_score, rgb_evaluated=False)
+            rows.append(row)
+        by_index = {row["window_index"]: row for row in rows}
+        if rgb_windows:
+            self.load_rgb()
+            for done, (index, clip) in enumerate(iter_clips(
+                    Path(result["source"]).parent, descriptor, rgb_windows), 1):
+                g = geometries[index]
                 v = encode(self.encoder, clip[None], torch.device("cpu"))
                 vn = torch.tensor((v-self.stats["video_mean"])/self.stats["video_std"])
                 gn = torch.tensor((g-self.stats["geometry_mean"])/self.stats["geometry_std"])
                 with torch.inference_mode():
                     rgb_score = float(self.head(vn, gn).sigmoid()[0])
-            row = {k: window[k] for k in ("track_ids", "context_start_seconds", "context_end_seconds")}
-            # A skipped RGB call is not a zero score; joint_score is its safe upper bound.
-            row.update(window_index=index, geometry_score=geometry_score, rgb_score=rgb_score,
-                       joint_score=min(geometry_score, rgb_score) if rgb_score is not None else geometry_score,
-                       rgb_evaluated=rgb_score is not None)
-            rows.append(row)
-            if progress:
-                progress(.65+.3*len(rows)/max(1,len(eligible)), "Đang kiểm tra chuyển động của từng cặp xe")
+                row = by_index[index]
+                row.update(rgb_score=rgb_score, joint_score=min(row["geometry_score"], rgb_score),
+                           rgb_evaluated=True)
+                if progress:
+                    progress(.65+.3*done/len(rgb_windows), "Đang kiểm tra chuyển động của từng cặp xe")
         saved = {"identity": identity, "source": result["source"], "complete": True,
                  "scope": "development_vehicle_pair_diagnostic", "deployment_approved": False,
                  "contacts": contacts, "scores": rows,

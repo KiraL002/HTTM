@@ -28,6 +28,7 @@ ENV/
 !/models/yolov8m.pt
 !/models/accident_rf_model.pkl
 !/models/visual_accident_classifier.pth
+!/models/traffic_anomaly_videomae_s.pth
 
 # Only deployable models/configuration; histories and renders stay local
 /outputs/*

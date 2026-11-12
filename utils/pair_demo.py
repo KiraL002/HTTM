@@ -20,7 +20,7 @@ from .event_explanations import describe_event
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "outputs/vehicle_pair_runtime/runtime_policy.json"
 CACHE = ROOT / "outputs/pair_demo"
-VERSION = "vehicle-incident-demo-2026-10-30.4-single-fallback"
+VERSION = "vehicle-incident-demo-2026-11-11-temporal-proposals"
 DECISION_RULE = "observed_pair_or_single_vehicle_fallback_v2"
 CLASSES = {2: "car", 5: "bus", 7: "truck"}
 
@@ -46,6 +46,11 @@ def profile():
             or not .5<=single.get("threshold",0)<=1 or not .5<=single.get("rotation_threshold",0)<=1
             or file_sha(single_path)!=single.get("model_sha256")):
         raise ValueError("Nhánh sự cố một xe chưa khớp bản đã kiểm tra.")
+    temporal=value.get("temporal_proposals",{})
+    if temporal.get("enabled"):
+        path=(ROOT/temporal["model"]).resolve()
+        if not path.is_relative_to(ROOT) or file_sha(path)!=temporal["model_sha256"]:
+            raise ValueError("Mô hình tìm đoạn bất thường không khớp cấu hình.")
     for relative,digest in value["checked_code"].items():
         if file_sha(ROOT/relative) != digest:
             raise ValueError("Mã suy luận đã thay đổi; cần kiểm tra lại trước khi dùng kết quả lưu.")
@@ -271,7 +276,14 @@ def _run_analysis(source, destination, progress, workspace):
     from .pair_events import decide
     started = time.monotonic()
     policy = profile()
-    pair_progress=(lambda value,message: progress(.8*value,message)) if progress else None
+    temporal_review=None
+    settings=policy.get("temporal_proposals",{})
+    if settings.get("enabled"):
+        from .temporal_review import scan as scan_temporal
+        if progress: progress(.01,"Đang tìm các đoạn bất thường trong video")
+        temporal_review=scan_temporal(source,settings,ROOT,
+            (lambda value:progress(.02+.16*value,"Đang tìm các đoạn bất thường trong video")) if progress else None)
+    pair_progress=(lambda value,message: progress(.18+.60*value,message)) if progress else None
     proposal, scored = analyze(source, workspace/'pairs', pair_progress,
                                trace_output=workspace/'tracks')
     events = decide(proposal["contacts"],scored["scores"],policy["threshold"])
@@ -285,6 +297,11 @@ def _run_analysis(source, destination, progress, workspace):
             raise ValueError("Model một xe khác cấu hình đã kiểm tra.")
         events=single["events"]
         single_evaluated=True
+    if temporal_review is not None:
+        from .temporal_review import verify as verify_temporal
+        events,extra_single=verify_temporal(temporal_review,proposal,scored,policy,
+            workspace/"temporal",events,progress)
+        single_evaluated=single_evaluated or extra_single
     with np.load(proposal["detection_trace"],allow_pickle=False) as data:
         observations = data["observations"]
     for i,event in enumerate(events,1):
@@ -305,6 +322,7 @@ def _run_analysis(source, destination, progress, workspace):
                   single_rotation_threshold=policy["single_vehicle"]["rotation_threshold"],
                   analysis_version=VERSION,verdict_rule=policy["decision_rule"],
                   event_detection_complete=True,tracking_enabled=True,
+                  temporal_review=temporal_review,
                   inference_cache_reused=False,
                   production_deployment_approved=False,
                   completed_at=datetime.now().strftime("%d/%m/%Y %H:%M"))
