@@ -1002,11 +1002,19 @@ class TrafficAccidentPipeline:
                 )
 
                 is_adj_lane_overlap = False
+                is_perpendicular_impact = (
+                    angle_diff is not None
+                    and angle_diff > 45.0
+                    and max_decel_now >= 6.0
+                    and pair_closing_mps >= 4.5
+                )
                 if one_is_stationary and (gy_diff > 0.35 or fp_iou < 0.05) and max_decel_now < 3.5 and max_drop_now < 2.5:
                     # Xe di chuyển lướt ngang qua xe đang đỗ bên đường ở hai lớp chiều sâu khác nhau
                     is_adj_lane_overlap = True
-                elif gy_diff > 0.55 and fp_iou == 0.0 and max_decel_now < 3.5:
-                    # Chồng lấn phối cảnh theo chiều sâu dọc đường (đáy xe xa chỉ chạm nóc xe gần, 2 nửa thân dưới không chạm nhau)
+                elif not any_vru and fp_iou == 0.0 and gy_diff > 0.62 and not is_perpendicular_impact:
+                    # Chồng lấn phối cảnh theo chiều sâu dọc đường (đáy xe xa chỉ chạm nóc xe gần, trừ cú đâm ngang T-bone cực mạnh)
+                    is_adj_lane_overlap = True
+                elif any_vru and gy_diff > 0.55 and fp_iou == 0.0 and max_decel_now < 3.5:
                     is_adj_lane_overlap = True
                 elif angle_diff is not None and angle_diff <= 42.0:
                     max_dir_chg = max(feat1.direction_change_max_deg, feat2.direction_change_max_deg)
@@ -1015,7 +1023,7 @@ class TrafficAccidentPipeline:
                     elif gy_diff > 0.72 and fp_iou == 0.0 and pair_closing_mps < 2.2 and max_decel_now < 3.5:
                         is_adj_lane_overlap = True
 
-                max_contact_dist = 6.2 if any_large else (3.8 if any_vru else 4.8)
+                max_contact_dist = 6.2 if any_large else (3.8 if any_vru else (6.5 if fp_iou >= 0.02 else 4.8))
                 if is_adj_lane_overlap or pair_dist_m > max_contact_dist:
                     continue
                 if max(feat1.speed_mps, feat2.speed_mps) < 0.8 and pair_closing_mps < 1.5 and peak_pair_speed < 2.2:
@@ -1224,40 +1232,30 @@ class TrafficAccidentPipeline:
                 box_ar = w_box / h_box
 
                 near_recent_crash_site = False
-                if is_vru_cls and feature.speed_mps < 2.0:
+                if is_vru_cls and feature.speed_mps < 1.6:
                     cur_t_s = self.frame_id / max(1.0, self.fps)
                     for ev in self.event_detector.all_events():
-                        if (cur_t_s - ev.end_time_s) <= 5.0:
+                        ev_ref_f = ev.peak_frame if ev.peak_frame > 0 else ev.start_frame
+                        ev_t_ref = ev_ref_f / max(1.0, self.fps)
+                        if (cur_t_s - ev_t_ref) <= 3.0 and (cur_t_s - ev.end_time_s) <= 3.0:
                             crash_p = self.event_detector._event_crash_positions.get(ev.event_id)
-                            if crash_p is not None:
-                                if float(np.linalg.norm(current_position - crash_p)) <= 5.0:
-                                    near_recent_crash_site = True
-                                    break
+                            if crash_p is not None and float(np.linalg.norm(current_position - crash_p)) <= 4.5:
+                                near_recent_crash_site = True
+                                break
                             for ex_tid, ex_box in ev.track_bboxes.items():
                                 if ex_box is not None:
                                     dx_b = max(0.0, max(float(track.bbox[0]), float(ex_box[0])) - min(float(track.bbox[2]), float(ex_box[2])))
                                     dy_b = max(0.0, max(float(track.bbox[1]), float(ex_box[1])) - min(float(track.bbox[3]), float(ex_box[3])))
-                                    if (dx_b**2 + dy_b**2)**0.5 <= 60.0:
+                                    if (dx_b**2 + dy_b**2)**0.5 <= 50.0:
                                         near_recent_crash_site = True
                                         break
 
-                is_fallen_vru = (
-                    (
-                        (is_two_wheeler and box_ar >= 2.0 and feature.speed_mps < 1.8)
-                        or (cls_lower in ("person", "pedestrian") and box_ar >= 0.72 and feature.speed_mps < 1.8)
-                    )
-                    and (
-                        vis_acc_tag >= 0.35
-                        or self.accident_detected
-                        or feature.bbox_deformation == 1
-                        or near_recent_crash_site
-                    )
-                ) or (
+                is_fallen_vru = bool(
                     near_recent_crash_site
+                    and feature.speed_mps < 1.5
                     and (
-                        vis_acc_tag >= 0.35
-                        or is_two_wheeler
-                        or (cls_lower in ("person", "pedestrian") and box_ar >= 0.65)
+                        (is_two_wheeler and (box_ar >= 1.9 or vis_acc_tag >= 0.40 or feature.bbox_deformation == 1))
+                        or (cls_lower in ("person", "pedestrian") and box_ar >= 0.68)
                     )
                 )
                 features_dict["is_fallen_vru"] = 1 if is_fallen_vru else 0
@@ -1297,10 +1295,9 @@ class TrafficAccidentPipeline:
                             and vis_acc_tag >= 0.45
                             and (feature.speed_mps < 2.2 or feature.stopped_after_motion == 1)
                             and (
-                                feature.deceleration_mps2 >= 2.8
-                                or feature.speed_drop_window_mps >= 2.0
+                                feature.speed_drop_window_mps >= 3.5
                                 or feature.bbox_deformation == 1
-                                or abs(feature.yaw_rate_dps) >= 60.0
+                                or abs(feature.yaw_rate_dps) >= 75.0
                             )
                         )
                     )

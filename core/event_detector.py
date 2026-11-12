@@ -164,9 +164,10 @@ class EventDetector:
             )
             return
 
-        # 1c. Va chạm giữa xe máy và xe đạp / xe 2 bánh
-        if (has_motorcycle and has_bicycle) or (
-            (has_motorcycle or has_bicycle) and num_vehicles >= 2 and not has_car_or_large
+        # 1c. Va chạm giữa xe máy và xe đạp / giữa 2 phương tiện 2 bánh (không có ô tô)
+        if not has_car_or_large and (
+            (has_motorcycle and has_bicycle)
+            or (not has_pedestrian and (has_motorcycle or has_bicycle) and num_vehicles >= 2)
         ):
             event.accident_type = "car_motorcycle_collision"
             v_pair = "xe máy với xe đạp" if (has_motorcycle and has_bicycle) else "giữa các phương tiện 2 bánh"
@@ -178,9 +179,9 @@ class EventDetector:
             return
 
         # 2. Va chạm với người đi bộ hoặc người đi xe đạp
-        if (has_pedestrian or has_bicycle) and (has_car_or_large or has_motorcycle or has_direct_accident_cls):
+        if (has_pedestrian or has_bicycle) and (has_car_or_large or has_motorcycle or has_bicycle or has_direct_accident_cls):
             event.accident_type = "vehicle_pedestrian_collision"
-            target_vn = "người đi xe đạp" if has_bicycle else "người đi bộ"
+            target_vn = "người đi xe đạp" if (has_bicycle and not has_pedestrian) else "người đi bộ"
             event.type_title = f"⚠️ Phương tiện va chạm {target_vn}"
             event.description = (
                 f"Sự cố va chạm nghiêm trọng giữa {', '.join(labels)} tại giây thứ {event.start_time_s:.2f}s "
@@ -196,16 +197,6 @@ class EventDetector:
             event.description = (
                 f"Phát hiện hiện trường va chạm giao thông trực tiếp tại giây thứ {event.start_time_s:.2f}s "
                 f"(Frame #{event.start_frame} - #{event.end_frame}) với độ tin cậy cao ({event.probability*100:.1f}%)."
-            )
-            return
-
-        # 2c. Va chạm giữa 2 xe máy / xe 2 bánh
-        if (has_motorcycle or has_bicycle) and num_vehicles >= 2 and not has_car_or_large:
-            event.accident_type = "car_motorcycle_collision"
-            event.type_title = "💥 Va chạm giữa các phương tiện 2 bánh"
-            event.description = (
-                f"Va chạm trực tiếp giữa {', '.join(labels)} tại giây thứ {event.start_time_s:.2f}s "
-                f"(Frame #{event.start_frame} - #{event.end_frame}) khiến phương tiện ngã đổ trên mặt đường."
             )
             return
 
@@ -424,7 +415,7 @@ class EventDetector:
                 is_vru
                 and vis_acc_tag >= 0.45
                 and (spd < 2.2 or stopped_after_motion == 1)
-                and (decel >= 2.8 or speed_drop >= 2.0 or bbox_deform == 1 or yaw_rate >= 60.0)
+                and (speed_drop >= 3.5 or bbox_deform == 1 or yaw_rate >= 75.0)
             )
         )
 
@@ -483,19 +474,21 @@ class EventDetector:
 
         for event in self._events:
             if not event.active:
-                # Sự kiện đã đóng: gom các mảnh hậu quả ngã đổ tại đúng hiện trường va chạm (trong 5s)
-                recent_closed = (frame_id - event.end_frame) <= int(self.fps * 5.0)
+                # Sự kiện đã đóng: chỉ gom hậu quả trong vòng 3.5s từ đỉnh va chạm tại đúng cụm va chạm
+                recent_closed = (frame_id - event.end_frame) <= int(self.fps * 2.5)
+                ref_peak = event.peak_frame if event.peak_frame > 0 else event.start_frame
+                within_aftermath_win = (frame_id - ref_peak) <= int(self.fps * 3.5)
                 crash_pos = self._event_crash_positions.get(event.event_id)
                 near_crash_site = False
                 if pos_arr is not None and crash_pos is not None:
-                    near_crash_site = float(np.linalg.norm(pos_arr - crash_pos)) <= 5.5
+                    near_crash_site = float(np.linalg.norm(pos_arr - crash_pos)) <= 5.0
 
                 if track_id in event.track_ids:
                     if recent_closed or (near_crash_site and speed < 1.8):
                         return event
                 elif recent_closed and near_crash_site and partner_tid in event.track_ids:
                     return event
-                elif recent_closed and near_crash_site and bool(f_dict.get("is_fallen_vru", 0)):
+                elif within_aftermath_win and near_crash_site and bool(f_dict.get("is_fallen_vru", 0)):
                     return event
                 continue
 
@@ -533,13 +526,14 @@ class EventDetector:
                         if inter > 0.0 and bool(f_dict.get("has_physical_contact", 0)):
                             return event
 
-            # 2. Gom dựa trên cự ly thực tế BEV chặt chẽ (<= 3.8m)
+            # 2. Gom dựa trên cự ly thực tế BEV chặt chẽ (<= 3.8m, hoặc <= 5.0m cho mảnh hậu quả VRU)
+            merge_rad = 5.0 if bool(f_dict.get("is_fallen_vru", 0)) else min(3.8, self.spatial_merge_distance)
             if pos_arr is not None:
                 for existing_tid in event.track_ids:
                     if existing_tid in self._track_positions:
                         existing_pos = self._track_positions[existing_tid]
                         dist = float(np.linalg.norm(pos_arr - existing_pos))
-                        if dist <= min(3.8, self.spatial_merge_distance):
+                        if dist <= merge_rad:
                             return event
 
         return None
@@ -638,20 +632,34 @@ class EventDetector:
             if merge_event is not None:
                 if not merge_event.active:
                     if bool(f_dict.get("is_fallen_vru", 0)):
-                        merge_event.track_ids.add(track_id)
-                        merge_event.vehicle_types[track_id] = vehicle_class
-                        if bbox is not None:
-                            merge_event.track_bboxes[track_id] = bbox
-                        merge_event.end_frame = max(merge_event.end_frame, frame_id)
-                        merge_event.end_time_s = merge_event.end_frame / self.fps
-                        merge_event.duration_s = max(0.0, (merge_event.end_frame - merge_event.start_frame + 1) / self.fps)
-                        merge_event.accident_type = self._infer_accident_type(merge_event)
-                        return merge_event
+                        has_existing_vru = any(
+                            str(vc).lower() in ("motorcycle", "motorbike", "bicycle", "bike", "person", "pedestrian")
+                            for vc in merge_event.vehicle_types.values()
+                        )
+                        ref_peak = merge_event.peak_frame if merge_event.peak_frame > 0 else merge_event.start_frame
+                        within_aftermath_cap = (frame_id - ref_peak) <= int(self.fps * 3.5)
+                        if has_existing_vru and within_aftermath_cap:
+                            merge_event.track_ids.add(track_id)
+                            merge_event.vehicle_types[track_id] = vehicle_class
+                            if bbox is not None:
+                                merge_event.track_bboxes[track_id] = bbox
+                            merge_event.end_frame = max(merge_event.end_frame, frame_id)
+                            merge_event.end_time_s = merge_event.end_frame / self.fps
+                            merge_event.duration_s = max(0.0, (merge_event.end_frame - merge_event.start_frame + 1) / self.fps)
+                            merge_event.accident_type = self._infer_accident_type(merge_event)
+                        return None
                     if not has_direct_collision and (frame_id - merge_event.end_frame) <= int(self.fps * 2.5):
                         return None
                     if not has_direct_collision and speed < 1.8:
                         return None
                     merge_event = None
+            if merge_event is None and bool(f_dict.get("is_fallen_vru", 0)):
+                # Tuyệt đối không tạo sự kiện tai nạn mới độc lập chỉ từ đối tượng nằm/đổ thụ động
+                non_fallen_valid = self._is_physically_consistent_accident(
+                    track_id, {**f_dict, "is_fallen_vru": 0}, vehicle_class=vehicle_class
+                )
+                if not non_fallen_valid:
+                    return None
             if merge_event is not None:
                 merge_event.track_ids.add(track_id)
                 merge_event.vehicle_types[track_id] = vehicle_class

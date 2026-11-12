@@ -6,6 +6,7 @@ Giao diện Giám sát Trực quan, Tập trung Trọng tâm & Không Chi tiết
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import tempfile
 import time
@@ -492,7 +493,7 @@ if load_cached_clicked and selected_video_path is not None:
 
 if run_clicked and selected_video_path is not None:
     video_stem = Path(selected_video_name).stem
-    run_config = base_config.copy()
+    run_config = copy.deepcopy(base_config)
     run_config["video"]["input"] = str(selected_video_path)
     run_config["video"]["display"] = False
     run_config["video"]["save_output"] = True
