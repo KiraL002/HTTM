@@ -164,10 +164,10 @@ class EventDetector:
             )
             return
 
-        # 1c. Va chạm giữa xe máy và xe đạp / giữa 2 phương tiện 2 bánh (không có ô tô)
-        if not has_car_or_large and (
+        # 1c. Va chạm giữa xe máy và xe đạp / giữa 2 phương tiện 2 bánh (không có ô tô hoặc người đi bộ)
+        if not has_car_or_large and not has_pedestrian and (
             (has_motorcycle and has_bicycle)
-            or (not has_pedestrian and (has_motorcycle or has_bicycle) and num_vehicles >= 2)
+            or ((has_motorcycle or has_bicycle) and num_vehicles >= 2)
         ):
             event.accident_type = "car_motorcycle_collision"
             v_pair = "xe máy với xe đạp" if (has_motorcycle and has_bicycle) else "giữa các phương tiện 2 bánh"

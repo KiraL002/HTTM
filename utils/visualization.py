@@ -58,9 +58,6 @@ def draw_detection(
             f"{confidence:.2f}"
         )
 
-    if is_accident:
-        parts.append("ACCIDENT!")
-
     text = " | ".join(parts)
 
     text_y = max(
