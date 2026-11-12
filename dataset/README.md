@@ -1,74 +1,77 @@
 # 📊 AcciVision — Hướng Dẫn Bộ Dữ Liệu (Dataset Guide)
 
-Thư mục `dataset/` chứa các bộ dữ liệu đặc trưng phục vụ huấn luyện, thẩm định (validation) và kiểm thử (testing) hệ thống phát hiện tai nạn giao thông AcciVision.
+Thư mục `dataset/` chứa các bộ dữ liệu đặc trưng động học và video thực tế đã được **kiểm toán, lọc nhiễu và gán nhãn đa lớp (4 cột nhãn)** phục vụ huấn luyện và đánh giá hệ thống phát hiện tai nạn giao thông AcciVision.
 
 ---
 
-## 1. Các File Dataset Có Sẵn
+## 1. Danh Sách Các Tập Dữ Liệu Hiện Có
 
-| Tên File | Số Mẫu | Mục Đích | Mô Tả |
-| :--- | :--- | :--- | :--- |
-| **`output_features.csv`** | 608 | Dữ liệu video thực tế | Đặc trưng trích xuất từ video `traffic.mp4` qua pipeline AcciVision (YOLO + ByteTrack + Perspective Transform). |
-| **`train_diverse_features.csv`** | 6,615 | Tập huấn luyện (Train) | Đa dạng kịch bản: va chạm phía sau, đối đầu, đâm sườn, mất lái, dừng đột ngột, cao tốc bình thường, dừng-chạy đô thị, chuyển làn. |
-| **`val_diverse_features.csv`** | 1,400 | Tập thẩm định (Validation) | Đánh giá độ tổng quát hóa của mô hình trên các kịch bản độc lập. |
-| **`test_diverse_features.csv`** | 1,435 | Tập kiểm thử (Test) | Bộ benchmark đánh giá hiệu năng cuối cùng. |
-| **`combined_train_dataset.csv`** | 7,142 | Tập huấn luyện tổng hợp | Kết hợp đặc trưng video thật và bộ đa kịch bản. **Khuyến nghị dùng để huấn luyện Random Forest.** |
-| **`benchmark_diverse_dataset.csv`** | 9,450 | Tập toàn diện | Toàn bộ các chuỗi kịch bản mô phỏng vật lý đa dạng. |
-
----
-
-## 2. Hướng Dẫn Huấn Luyện Mô Hình
-
-### 2.1 Huấn luyện trên tập kết hợp (Khuyến nghị)
-
-```bash
-python train_rf_baseline.py --csv dataset/combined_train_dataset.csv --output models/accident_rf_model.pkl
-```
-
-### 2.2 Huấn luyện trên tập đa kịch bản
-
-```bash
-python train_rf_baseline.py --csv dataset/train_diverse_features.csv --output models/accident_rf_model.pkl
-```
-
-### 2.3 Huấn luyện lại khi có thêm dữ liệu
-
-```bash
-python dataset/generate_diverse_dataset.py
-python train_rf_baseline.py --csv dataset/combined_train_dataset.csv
-```
+| Tên File / Thư Mục | Số Mẫu / Quy Mô | Thành Phần | Mô Tả Chi Tiết |
+| :--- | :---: | :--- | :--- |
+| **`cleaned_train_dataset.csv`** | **137,130 dòng** | `128,402 NORMAL` (93.6%)<br>`8,728 ACCIDENT` (6.4%) | **Tập huấn luyện chính chuẩn hóa (39 cột, 0 giá trị khuyết).** Hợp nhất dữ liệu thực tế từ 150 video CCTV/Dashcam + **19,309 mẫu thực tế phương tiện 2 bánh & người đi bộ (`real_vru_motorcycle_dataset.csv`)** + dữ liệu đa kịch bản và 14,000 mẫu âm tính khó (hard negatives). |
+| **`real_vru_motorcycle_dataset.csv`** | **19,309 dòng** | `16,651 NORMAL`<br>`2,658 ACCIDENT` | **Dữ liệu động học thực tế chuyên biệt cho phương tiện 2 bánh (`motorcycle`, `bicycle`) và người đi bộ (`person`)** trích xuất từ **114 video thực tế** thuộc 5 bộ dữ liệu chuẩn quốc tế (`DoTA`, `CAP-DATA`, `DADA-2000`, `MANUAL-DATA`, `Smart-Dashcam`). |
+| **`vru_real_videos/`** | **114 video (`.mp4`)** | `52` Xe máy tai nạn<br>`28` Xe đạp tai nạn<br>`28` Người đi bộ tai nạn<br>`6` Xe máy bình thường | Kho video thực tế đã tải và xác thực từ `VRU-Accident` (`DoTA`, `CAP-DATA`, `DADA-2000`, `MANUAL-DATA`) và `Smart-Dashcam Motorcycle Benchmark`, kèm metadata chi tiết trong `vru_metadata.json`. |
+| **`vru_annotations/`** | **8 tệp JSON** | `1,000` nhãn VQA + Dense Caption | Bộ nhãn chuẩn Ground-Truth gốc (`*_VQA_annotation.json` và `*_Dense_Caption.json`) của 4 bộ dữ liệu học thuật `DoTA`, `CAP_DATA`, `DADA_2000`, `MANUAL_DATA`. |
+| **`combined_train_dataset.csv`** | **93,606 dòng** | 93.0% Video thực tế<br>7.0% Mô phỏng vật lý | Dữ liệu trích xuất từ 150 video tai nạn thực tế (YouTube/DoTA/Dashcam) đã loại bỏ 17,709 dòng gán nhãn sai. |
+| **`train_diverse_features.csv`** | **10,215 dòng** | Đa kịch bản & Đa phương tiện | Tập huấn luyện đa dạng kịch bản va chạm (ô tô, xe máy, xe đạp, người đi bộ, xe tải, xe buýt). |
+| **`benchmark_diverse_dataset.csv`** | **13,050 dòng** | Tập kiểm chuẩn đa kịch bản | Toàn bộ các chuỗi kịch bản vật lý đa dạng đã gán nhãn đầy đủ. |
+| **`val_diverse_features.csv`** | **1,400 dòng** | Tập thẩm định (Validation) | Đánh giá độ tổng quát hóa của mô hình trên các kịch bản độc lập. |
+| **`test_diverse_features.csv`** | **1,435 dòng** | Tập kiểm thử (Test) | Bộ benchmark đánh giá hiệu năng độc lập. |
+| **`output_features.csv`** | — | Đầu ra runtime | Tệp đặc trưng tự động xuất ra sau mỗi lần chạy `main.py` hoặc `app.py`. |
 
 ---
 
-## 3. Trích Xuất Đặc Trưng Từ Video Mới
+## 2. Cấu Trúc Nhãn Dữ Liệu (4 Cột Nhãn Cuối Mỗi Dòng)
 
-Nếu bạn có thêm video giao thông (`.mp4`, `.avi`, `.mkv`), sử dụng công cụ trích xuất tự động:
+Mọi tệp dữ liệu huấn luyện trong `dataset/` đều được chuẩn hóa đồng nhất **39 cột** (tương thích 100% với `FEATURE_COLUMNS` trong `core/classifier.py` và `OBJECT_TYPE_MAP` trong `core/tracker.py`) với **4 cột nhãn tường minh ở cuối bảng**:
 
-```bash
-# Trích xuất từ thư mục video tai nạn:
-python dataset/extract_dataset_from_videos.py --video-dir dataset/accident_videos --label-accident --output dataset/extracted_accidents.csv
-
-# Trích xuất từ thư mục video giao thông bình thường:
-python dataset/extract_dataset_from_videos.py --video-dir dataset/normal_videos --output dataset/extracted_normal.csv
-```
+1. **`status`**: Trạng thái cảnh báo (`"NORMAL"` hoặc `"POSSIBLE ACCIDENT"`).
+2. **`label`**: Nhãn nhị phân phục vụ huấn luyện (`0` = Bình thường, `1` = Tai nạn).
+3. **`accident_type`**: Mã định danh loại tai nạn tiếng Anh (9 lớp):
+   - `normal`
+   - `rear_end_collision`
+   - `head_on_collision`
+   - `side_impact_collision`
+   - `car_motorcycle_collision`
+   - `motorcycle_fall_or_crash`
+   - `vehicle_pedestrian_collision`
+   - `single_vehicle_spin_or_rollover`
+   - `single_vehicle_crash`
+4. **`accident_label_vn`**: Mô tả chi tiết loại tai nạn bằng tiếng Việt (ví dụ: `"Va chạm xe máy với ô tô / xe lớn"`, `"Tai nạn xe máy tự ngã / trượt đường"`, `"Va chạm người đi bộ / xe đạp"`...).
 
 ---
 
-## 4. Bộ Dữ Liệu Video Công Khai (Public Benchmarks)
+## 3. Phân Bố Mẫu Tai Nạn Theo Phương Tiện & Kịch Bản (`cleaned_train_dataset.csv`)
 
-Các nguồn video tai nạn thực tế từ cộng đồng học thuật quốc tế:
+### Theo nhóm phương tiện (`8,728` mẫu tai nạn xác thực):
+- **Ô tô con (`car`):** 4,683 mẫu
+- **Xe máy (`motorcycle`):** 2,079 mẫu
+- **Người đi bộ (`person`):** 704 mẫu
+- **Xe tải (`truck`):** 673 mẫu
+- **Xe buýt (`bus`):** 350 mẫu
+- **Xe đạp (`bicycle`):** 236 mẫu
 
-1. **DoTA (Detection of Traffic Anomaly)**
-   - 4,677 video giám sát thực tế với 9 loại bất thường
-   - [GitHub](https://github.com/MoonBlvd/Detection-of-Traffic-Anomaly)
+### Theo kịch bản tai nạn (`accident_label_vn`):
+- **Va chạm xe máy với ô tô / xe lớn (`car_motorcycle_collision`):** 2,316 mẫu
+- **Va chạm người đi bộ / xe đạp (`vehicle_pedestrian_collision`):** 2,009 mẫu
+- **Va chạm phía sau - Tông đuôi (`rear_end_collision`):** 1,800 mẫu
+- **Va chạm sườn xe / Giao lộ (`side_impact_collision`):** 994 mẫu
+- **Tai nạn xe máy tự ngã / trượt đường (`motorcycle_fall_or_crash`):** 523 mẫu
+- **Xe mất lái quay vòng / Lật xe (`single_vehicle_spin_or_rollover`):** 446 mẫu
+- **Va chạm đối đầu trực diện (`head_on_collision`):** 406 mẫu
+- **Xe đâm vật cản / Dải phân cách (`single_vehicle_crash`):** 234 mẫu
 
-2. **CCD (Car Crash Dataset)**
-   - 4,500 video va chạm từ camera hành trình
-   - [GitHub](https://github.com/coeusguo/Car-Crash-Dataset-CCD)
+---
 
-3. **CADP (Car Accident Detection and Prediction)**
-   - 1,416 video từ camera CCTV giám sát giao thông
-   - [GitHub](https://github.com/ankitshah009/Car-Accident-Detection-and-Prediction-Dataset)
+## 4. Các Công Cụ Quản Lý & Huấn Luyện Dữ Liệu
 
-4. **DAD / A3D (Dashcam Accident Dataset)**
-   - 1,750 video hành trình với nhãn thời điểm va chạm
+```bash
+# 1. Làm sạch nhiễu nhãn và tái tạo bộ dữ liệu chuẩn hóa (137,130 mẫu)
+python dataset/clean_and_relabel_dataset.py
+
+# 2. Huấn luyện mô hình Random Forest trên bộ dữ liệu chuẩn hóa
+python train_rf_baseline.py
+
+# 3. Xuất bộ 5 biểu đồ đánh giá thực nghiệm (300 DPI) vào outputs/evaluation_charts/
+python dataset/evaluate_and_plot_charts.py
+```

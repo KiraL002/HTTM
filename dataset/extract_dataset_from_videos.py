@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cv2
 import numpy as np
@@ -106,15 +109,68 @@ def process_video(
                 previous_directions[tid] = feat.direction_deg
                 previous_speeds[tid] = feat.speed_mps
 
-                # Xác định nhãn
-                # Với video tai nạn, các frame có phanh gấp hoặc đổi hướng mạnh sẽ là ACCIDENT
+                # Xác định nhãn chuẩn xác dựa trên nhận diện thị giác YOLO11 + quy luật vật lý va chạm
+                cls_lower = str(t.class_name).lower().strip()
+                is_direct_yolo_acc = cls_lower in ("accident", "car_car_accident", "car_person_accident", "injured")
+                is_two_wheeler = cls_lower in ("motorcycle", "bicycle", "bike", "person")
+                dist_limit = 4.5 if is_two_wheeler else 3.5
+
                 if is_accident_video:
-                    is_crash = (feat.deceleration_mps2 >= 3.5 or feat.direction_change_deg >= 35.0 or feat.speed_drop_window_mps >= 5.0)
+                    cond_multi = (
+                        feat.has_neighbor == 1
+                        and feat.nearest_distance_m <= dist_limit
+                        and (feat.closing_speed_mps >= 2.0 or feat.speed_drop_window_mps >= 3.0)
+                        and (
+                            feat.deceleration_mps2 >= 3.0
+                            or feat.direction_change_deg >= 25.0
+                            or feat.speed_mps <= 3.0
+                            or feat.stopped_after_motion == 1
+                        )
+                    )
+                    cond_single = (
+                        feat.has_neighbor == 0
+                        and (
+                            (feat.stopped_after_motion == 1 and feat.deceleration_mps2 >= 4.5 and feat.speed_drop_window_mps >= 4.0)
+                            or (abs(feat.yaw_rate_dps) >= 80.0 and feat.direction_change_sum_deg >= 70.0 and feat.speed_mps <= 3.5)
+                        )
+                    )
+                    is_crash = is_direct_yolo_acc or cond_multi or cond_single
                     status = "POSSIBLE ACCIDENT" if is_crash else "NORMAL"
-                    prob = 0.85 if is_crash else 0.05
+                    label_int = 1 if is_crash else 0
+                    prob = 0.92 if is_crash else 0.03
                 else:
+                    is_crash = False
                     status = "NORMAL"
+                    label_int = 0
                     prob = 0.02
+
+                if not is_crash:
+                    acc_type = "normal"
+                    acc_label_vn = "Bình thường (An toàn)"
+                elif cls_lower in ("person", "pedestrian", "bicycle", "bike", "car_person_accident", "injured"):
+                    acc_type = "vehicle_pedestrian_collision"
+                    acc_label_vn = "Va chạm người đi bộ / xe đạp"
+                elif cls_lower == "motorcycle" and feat.has_neighbor == 0:
+                    acc_type = "motorcycle_fall_or_crash"
+                    acc_label_vn = "Tai nạn xe máy tự ngã / trượt đường"
+                elif cls_lower == "motorcycle":
+                    acc_type = "car_motorcycle_collision"
+                    acc_label_vn = "Va chạm xe máy với ô tô / xe lớn"
+                elif feat.has_neighbor == 1 and feat.closing_speed_mps >= 12.0 and feat.direction_change_deg < 30.0:
+                    acc_type = "head_on_collision"
+                    acc_label_vn = "Va chạm đối đầu (Trực diện)"
+                elif feat.has_neighbor == 1 and (feat.direction_change_deg >= 28.0 or feat.direction_change_sum_deg >= 55.0):
+                    acc_type = "side_impact_collision"
+                    acc_label_vn = "Va chạm sườn xe / Giao lộ (T-bone)"
+                elif feat.has_neighbor == 1:
+                    acc_type = "rear_end_collision"
+                    acc_label_vn = "Va chạm phía sau (Tông đuôi)"
+                elif abs(feat.yaw_rate_dps) >= 80.0 or feat.direction_change_sum_deg >= 70.0:
+                    acc_type = "single_vehicle_spin_or_rollover"
+                    acc_label_vn = "Xe mất lái quay vòng / Lật xe"
+                else:
+                    acc_type = "single_vehicle_crash"
+                    acc_label_vn = "Xe đâm vật cản / Dải phân cách"
 
                 row = {
                     "video_id": video_id,
@@ -153,6 +209,9 @@ def process_video(
                     "interpolated": 0,
                     "accident_probability": prob,
                     "status": status,
+                    "label": label_int,
+                    "accident_type": acc_type,
+                    "accident_label_vn": acc_label_vn,
                 }
                 csv_writer.writerow(row)
                 written_rows += 1
@@ -167,7 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Extract features from multiple videos.")
     parser.add_argument("--video-dir", required=True, help="Directory containing .mp4 or .avi files")
     parser.add_argument("--output", default="dataset/extracted_features.csv", help="Output CSV path")
-    parser.add_argument("--yolo-model", default="models/yolov8n.pt", help="Path to YOLO weights")
+    parser.add_argument("--yolo-model", default="models/yolo11s_accident_vn.pt", help="Path to YOLO weights")
     parser.add_argument("--label-accident", action="store_true", help="Mark anomalies in these videos as accident")
     parser.add_argument("--max-frames", type=int, default=None, help="Max frames per video to process")
     args = parser.parse_args()
@@ -211,6 +270,7 @@ def main() -> None:
         "speed_drop_window_mps", "direction_change_max_deg", "direction_change_sum_deg",
         "speed_mean_mps", "speed_std_mps", "acceleration_std_mps2", "stopped_after_motion",
         "temporal_window", "interpolated", "accident_probability", "status",
+        "label", "accident_type", "accident_label_vn",
     ]
 
     total_rows = 0

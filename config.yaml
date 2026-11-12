@@ -40,9 +40,9 @@ video:
 # ============================================================
 
 yolo:
-  # Đường dẫn mô hình YOLOv8
-  # Các lựa chọn: yolov8n.pt (nhanh), yolov8s.pt, yolov8m.pt (chính xác hơn)
-  model: "models/yolov8n.pt"
+  # Đường dẫn mô hình YOLOv8 / YOLO11
+  # Các lựa chọn: models/yolo11s_accident_vn.pt (đặc trị tai nạn VN), models/accident_yolo_best.pt, models/yolov8n.pt
+  model: "models/yolo11s_accident_vn.pt"
 
   # Ngưỡng tin cậy phát hiện (confidence threshold)
   confidence: 0.30
@@ -126,6 +126,9 @@ perspective:
   meters_per_pixel_x: 0.05
   meters_per_pixel_y: 0.05
 
+  # Tự động hiệu chỉnh tỷ lệ mét/pixel theo độ phân giải khung hình và kích thước xe (Auto-Scale)
+  auto_scale: true
+
 
 # ============================================================
 # QUẢN LÝ QUỸ ĐẠO & NỘI SUY (Trajectory & Interpolation)
@@ -170,8 +173,8 @@ classifier:
   threshold: 0.75
 
   # Số frame liên tiếp duy trì trạng thái bất thường để xác nhận sự kiện tai nạn
-  # 8 - 12 frames (~0.25s - 0.4s) để lọc bỏ hoàn toàn rung lắc camera / bounding box jitter
-  confirmation_frames: 8
+  # 4 frames (~0.13s) giúp bắt tức thì cú va chạm mà không bị trôi
+  confirmation_frames: 4
 
 
 # ============================================================

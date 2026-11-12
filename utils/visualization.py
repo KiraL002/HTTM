@@ -20,9 +20,11 @@ def draw_detection(
     confidence: Optional[float] = None,
     track_id: Optional[int] = None,
     thickness: int = 2,
+    color: Optional[tuple[int, int, int]] = None,
+    status: Optional[str] = None,
 ) -> np.ndarray:
     """
-    Vẽ bounding box + label + track ID.
+    Vẽ bounding box + label + track ID (đổi sang màu ĐỎ khi có tai nạn).
     """
 
     x1, y1, x2, y2 = map(
@@ -30,12 +32,16 @@ def draw_detection(
         bbox,
     )
 
+    is_accident = status in ("ACCIDENT", "POSSIBLE ACCIDENT")
+    box_color = color if color is not None else ((0, 0, 255) if is_accident else (0, 255, 0))
+    box_thick = max(thickness, 3) if is_accident else thickness
+
     cv2.rectangle(
         frame,
         (x1, y1),
         (x2, y2),
-        (0, 255, 0),
-        thickness,
+        box_color,
+        box_thick,
     )
 
     parts = []
@@ -52,6 +58,9 @@ def draw_detection(
             f"{confidence:.2f}"
         )
 
+    if is_accident:
+        parts.append("ACCIDENT!")
+
     text = " | ".join(parts)
 
     text_y = max(
@@ -65,7 +74,7 @@ def draw_detection(
         (x1, text_y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
-        (0, 255, 0),
+        box_color,
         2,
         cv2.LINE_AA,
     )

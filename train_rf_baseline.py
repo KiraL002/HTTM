@@ -12,8 +12,14 @@ hỗ trợ:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import List, Tuple
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 import joblib
 import numpy as np
@@ -290,8 +296,12 @@ def main() -> None:
 
     csv_path = args.csv
     if csv_path is None:
+        cleaned_csv = project_root / "dataset" / "cleaned_train_dataset.csv"
         default_csv = project_root / "dataset" / "output_features.csv"
-        if default_csv.exists():
+        if cleaned_csv.exists():
+            csv_path = str(cleaned_csv)
+            print(f"Using default cleaned training dataset CSV: {csv_path}")
+        elif default_csv.exists():
             csv_path = str(default_csv)
             print(f"Using default real features CSV: {csv_path}")
         else:
